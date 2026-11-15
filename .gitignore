@@ -1,0 +1,6 @@
+/build*/
+benchmark_results.csv
+benchmark_plot.png
+*.tmp
+.cache
+.venv
