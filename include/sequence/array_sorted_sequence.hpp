@@ -2,6 +2,7 @@
 
 #include "common/concepts.hpp"
 #include "containers/dynamic_array.hpp"
+#include "search/binary_search.hpp"
 #include "sequence/i_sorted_sequence.hpp"
 
 #include <functional>
@@ -15,22 +16,6 @@ class ArraySortedSequence final : public ISortedSequence<T> {
 private:
     DynamicArray<T> items_;
     Compare compare_{};
-
-    std::size_t insertionPosition(const T& element) const {
-        std::size_t first = 0;
-        std::size_t count = items_.size();
-        while (count > 0) {
-            const std::size_t step = count / 2;
-            const std::size_t position = first + step;
-            if (!compare_(element, items_[position])) {
-                first = position + 1;
-                count -= step + 1;
-            } else {
-                count = step;
-            }
-        }
-        return first;
-    }
 
 public:
     ArraySortedSequence() = default;
@@ -57,20 +42,7 @@ public:
     }
 
     std::optional<std::size_t> indexOf(const T& element) const override {
-        std::size_t first = 0;
-        std::size_t count = items_.size();
-        while (count > 0) {
-            const std::size_t step = count / 2;
-            const std::size_t position = first + step;
-            if (compare_(items_[position], element)) {
-                first = position + 1;
-                count -= step + 1;
-            } else {
-                count = step;
-            }
-        }
-        if (first < items_.size() && !compare_(element, items_[first])) return first;
-        return std::nullopt;
+        return binarySearch(*this, element, IdentityExtractor{}, compare_);
     }
 
     std::expected<std::unique_ptr<ISortedSequence<T>>, SequenceError>
@@ -87,7 +59,7 @@ public:
 
     void add(const T& element) override {
         T value = element;
-        const std::size_t position = insertionPosition(value);
+        const std::size_t position = upperBound(*this, value, IdentityExtractor{}, compare_);
         items_.push_back(value);
         for (std::size_t index = items_.size() - 1; index > position; --index) {
             items_[index] = std::move(items_[index - 1]);

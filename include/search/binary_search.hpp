@@ -74,7 +74,7 @@ std::optional<std::size_t> binarySearch(
 ) {
     const std::size_t position = lowerBound(sequence, key, extractor, compare);
     if (position == sequence.getLength()) return std::nullopt;
-    const auto value = extractor(sequence.at(position));
+    const auto& value = extractor(sequence.at(position));
     if (compare(key, value) || compare(value, key)) return std::nullopt;
     return position;
 }

@@ -255,7 +255,7 @@ bool removed = dictionary.remove(10);
 
 ## `ArraySortedSequence<T, Compare>`
 
-`ArraySortedSequence` реализует `ISortedSequence` и хранит элементы в `DynamicArray<T>` ЛР-1. Готовая сортировка не вызывается: позиция нового элемента ищется бинарным поиском, после чего элементы собственного массива сдвигаются вправо.
+`ArraySortedSequence` реализует `ISortedSequence` и хранит элементы в `DynamicArray<T>` ЛР-1. Готовая сортировка не вызывается: `add` находит позицию общей функцией `upperBound`, `indexOf` использует общий `binarySearch`, после чего при вставке элементы собственного массива сдвигаются вправо. Собственной дублирующей реализации бинарных границ внутри последовательности нет.
 
 ```cpp
 #include "sequence/array_sorted_sequence.hpp"
