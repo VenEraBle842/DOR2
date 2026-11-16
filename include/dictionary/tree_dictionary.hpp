@@ -51,7 +51,7 @@ public:
     TreeDictionary() = default;
 
     TreeDictionary(const TreeDictionary& other) {
-        other.tree_.forEach(TraversalOrder::LKP, [this](const EntryPointer& entry) {
+        other.tree_.forEach(TraversalOrder::KLP, [this](const EntryPointer& entry) {
             const auto inserted = add(entry->key, entry->value.value());
             if (!inserted) {
                 throw std::logic_error("duplicate key while copying TreeDictionary");

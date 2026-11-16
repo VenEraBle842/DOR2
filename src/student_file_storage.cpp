@@ -105,18 +105,6 @@ std::expected<DynamicArray<Student>, FileFailure> StudentFileStorage::load(
     return students;
 }
 
-std::expected<void, FileFailure> StudentFileStorage::loadInto(
-    const std::filesystem::path& path,
-    StudentRepository& repository
-) {
-    auto loaded = load(path);
-    if (!loaded) return std::unexpected(loaded.error());
-    if (!repository.replaceAll(std::move(loaded.value()))) {
-        return std::unexpected(failure(FileError::DuplicateId, path, "duplicate student id"));
-    }
-    return {};
-}
-
 std::expected<void, FileFailure> StudentFileStorage::save(
     const std::filesystem::path& path,
     const StudentRepository& repository

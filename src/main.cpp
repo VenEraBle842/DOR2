@@ -72,7 +72,6 @@ std::string serviceErrorMessage(ServiceError error) {
         case ServiceError::IndexStale: return "indexes are stale; rebuild them";
         case ServiceError::InvalidRange: return "range upper bound is below lower bound";
         case ServiceError::InvalidKey: return "GPA must be finite";
-        case ServiceError::UnsupportedStrategy: return "strategy is not supported for this attribute";
         case ServiceError::VerificationFailed: return "search result verification failed";
     }
     return "unknown search error";
@@ -258,15 +257,36 @@ void rangeSearchMenu(const StudentSearchService& service) {
     }
 }
 
-void compositeSearch(const StudentSearchService& service) {
+std::optional<StudentCompositeKey> readCompositeKey() {
     const auto lastName = readText("Last name: ");
+    if (!lastName) return std::nullopt;
     const auto firstName = readText("First name: ");
+    if (!firstName) return std::nullopt;
     const auto birthYear = readNumber<int>("Birth year: ");
-    const auto strategy = readSearchStrategy();
-    if (lastName && firstName && birthYear && strategy) {
-        printResults(service, service.findByComposite(
-            StudentCompositeKey{*lastName, *firstName, *birthYear}, *strategy
-        ));
+    if (!birthYear) return std::nullopt;
+    return StudentCompositeKey{*lastName, *firstName, *birthYear};
+}
+
+void compositeSearch(const StudentSearchService& service) {
+    const auto mode = readNumber<int>("Search: 1 - exact, 2 - range\n> ");
+    if (!mode) return;
+    if (*mode == 1) {
+        const auto key = readCompositeKey();
+        if (!key) return;
+        const auto strategy = readSearchStrategy();
+        if (strategy) printResults(service, service.findByComposite(*key, *strategy));
+    } else if (*mode == 2) {
+        std::cout << "Inclusive lexicographic range: last name, first name, birth year\n"
+                  << "Lower key:\n";
+        const auto lower = readCompositeKey();
+        if (!lower) return;
+        std::cout << "Upper key:\n";
+        const auto upper = readCompositeKey();
+        if (!upper) return;
+        const auto strategy = readRangeStrategy();
+        if (strategy) printResults(service, service.findCompositeRange(*lower, *upper, *strategy));
+    } else {
+        std::cout << "Unknown search mode\n";
     }
 }
 

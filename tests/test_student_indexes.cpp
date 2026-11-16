@@ -2,6 +2,9 @@
 
 #include "index/student_index_catalog.hpp"
 
+#include <limits>
+#include <utility>
+
 StudentRepository makeRepository() {
     StudentRepository repository;
     EXPECT_TRUE(repository.add(Student{30, "Ivan", "Smith", 2003, 4.5}).has_value());
@@ -46,7 +49,45 @@ TEST(StudentIndexCatalogTest, RangeIsInclusiveAndOrderedByKeyThenId) {
     EXPECT_EQ(years[1], 20U);
     EXPECT_EQ(years[2], 30U);
     EXPECT_EQ(years[3], 40U);
-    EXPECT_EQ(catalog.findGpaRange(repository, 5.0, 4.0).error(), SearchError::InvalidRange);
+    EXPECT_EQ(catalog.findGpaRange(repository, 5.0, 4.0).error(), IndexError::InvalidRange);
+}
+
+TEST(StudentIndexCatalogTest, RangeQueriesPreserveStateErrorsBeforeCheckingRangeOrder) {
+    auto repository = makeRepository();
+    StudentIndexCatalog catalog;
+    for (const auto error : {IndexError::NotBuilt, IndexError::Stale}) {
+        if (error == IndexError::Stale) {
+            catalog.build(repository);
+            ASSERT_TRUE(repository.add(Student{50, "New", "Student", 2000, 4.0}).has_value());
+        }
+        EXPECT_EQ(catalog.findBirthYearRange(repository, 2002, 2004).error(), error);
+        EXPECT_EQ(catalog.findGpaRange(repository, 4.0, 5.0).error(), error);
+        EXPECT_EQ(catalog.findCompositeRange(
+            repository, {"Brown", "Ivan", 2003}, {"Smith", "Ivan", 2003}
+        ).error(), error);
+        EXPECT_EQ(catalog.findBirthYearRange(repository, 2004, 2002).error(), error);
+        EXPECT_EQ(catalog.findGpaRange(repository, 5.0, 4.0).error(), error);
+        EXPECT_EQ(catalog.findCompositeRange(
+            repository, {"Smith", "Ivan", 2003}, {"Brown", "Ivan", 2003}
+        ).error(), error);
+    }
+}
+
+TEST(StudentIndexCatalogTest, RangeQueriesDistinguishInvalidBoundsFromStateErrors) {
+    auto repository = makeRepository();
+    StudentIndexCatalog catalog;
+    catalog.build(repository);
+    EXPECT_EQ(catalog.findBirthYearRange(repository, 2004, 2002).error(), IndexError::InvalidRange);
+    EXPECT_EQ(catalog.findGpaRange(repository, 5.0, 4.0).error(), IndexError::InvalidRange);
+    EXPECT_EQ(catalog.findCompositeRange(
+        repository, {"Smith", "Ivan", 2003}, {"Brown", "Ivan", 2003}
+    ).error(), IndexError::InvalidRange);
+    for (const double invalid : {std::numeric_limits<double>::quiet_NaN(),
+                                 std::numeric_limits<double>::infinity(),
+                                 -std::numeric_limits<double>::infinity()}) {
+        EXPECT_EQ(catalog.findGpaRange(repository, invalid, 5.0).error(), IndexError::InvalidKey);
+        EXPECT_EQ(catalog.findGpaRange(repository, 4.0, invalid).error(), IndexError::InvalidKey);
+    }
 }
 
 TEST(StudentIndexCatalogTest, DetectsNotBuiltAndStaleThenRebuilds) {
@@ -69,4 +110,93 @@ TEST(StudentRepositoryTest, RejectsDuplicateAndReplacementIsTransactional) {
     duplicate.push_back(Student{1, "B", "B", 2001, 4.1});
     EXPECT_FALSE(repository.replaceAll(std::move(duplicate)).has_value());
     EXPECT_EQ(repository.getCount(), 4U);
+}
+
+TEST(StudentIndexCatalogTest, RejectsAnotherRepositoryWithSameSizeAndNumberOfChanges) {
+    auto original = makeRepository();
+    auto unrelated = makeRepository();
+    StudentIndexCatalog catalog;
+    catalog.build(original);
+    EXPECT_NE(original.getSnapshotId(), unrelated.getSnapshotId());
+    EXPECT_EQ(catalog.findId(unrelated, 20).error(), IndexError::Stale);
+    EXPECT_EQ(catalog.findLastNameTree(unrelated, "Smith").error(), IndexError::Stale);
+    EXPECT_EQ(catalog.findLastNameBinary(unrelated, "Smith").error(), IndexError::Stale);
+    EXPECT_EQ(catalog.getStatistics(unrelated).error(), IndexError::Stale);
+    EXPECT_EQ(catalog.findBirthYearRange(unrelated, 2002, 2004).error(), IndexError::Stale);
+    EXPECT_EQ(catalog.findGpaRange(unrelated, 4.0, 5.0).error(), IndexError::Stale);
+    EXPECT_EQ(catalog.findCompositeRange(
+        unrelated, {"Brown", "Ivan", 2003}, {"Smith", "Ivan", 2003}
+    ).error(), IndexError::Stale);
+}
+
+TEST(StudentRepositoryTest, CopiesShareSnapshotUntilIndependentlyChanged) {
+    auto original = makeRepository();
+    StudentIndexCatalog catalog;
+    catalog.build(original);
+    auto copy = original;
+    StudentRepository assigned;
+    ASSERT_TRUE(assigned.add(Student{99, "Old", "Data", 1999, 3.0}).has_value());
+    assigned = original;
+    EXPECT_EQ(copy.getSnapshotId(), original.getSnapshotId());
+    EXPECT_EQ(assigned.getSnapshotId(), original.getSnapshotId());
+    EXPECT_EQ(catalog.findId(copy, 20)->value(), 2U);
+    EXPECT_EQ(catalog.findId(assigned, 20)->value(), 2U);
+    EXPECT_FALSE(assigned.findById(99).has_value());
+    ASSERT_TRUE(copy.add(Student{50, "New", "Student", 2000, 4.0}).has_value());
+    EXPECT_EQ(catalog.findId(copy, 20).error(), IndexError::Stale);
+    EXPECT_FALSE(original.findById(50).has_value());
+    assigned.clear();
+    EXPECT_EQ(catalog.findId(assigned, 20).error(), IndexError::Stale);
+    EXPECT_EQ(catalog.findId(original, 20)->value(), 2U);
+    EXPECT_EQ(original.getCount(), 4U);
+}
+
+TEST(StudentRepositoryTest, MovesTransferSnapshotAndResetSource) {
+    auto source = makeRepository();
+    StudentIndexCatalog catalog;
+    catalog.build(source);
+    const auto snapshot = source.getSnapshotId();
+    auto moved = std::move(source);
+    EXPECT_EQ(moved.getSnapshotId(), snapshot);
+    EXPECT_EQ(catalog.findId(moved, 20)->value(), 2U);
+    EXPECT_EQ(source.getCount(), 0U);
+    EXPECT_NE(source.getSnapshotId(), snapshot);
+    EXPECT_EQ(catalog.findId(source, 20).error(), IndexError::Stale);
+    ASSERT_TRUE(source.add(Student{20, "Reuse", "Source", 2000, 4.0}).has_value());
+    EXPECT_EQ(moved.findById(20)->firstName, "Ivan");
+
+    auto assigned = makeRepository();
+    StudentIndexCatalog oldCatalog;
+    oldCatalog.build(assigned);
+    assigned = std::move(moved);
+    EXPECT_EQ(assigned.getSnapshotId(), snapshot);
+    EXPECT_EQ(catalog.findId(assigned, 20)->value(), 2U);
+    EXPECT_EQ(oldCatalog.findId(assigned, 20).error(), IndexError::Stale);
+    EXPECT_EQ(moved.getCount(), 0U);
+    EXPECT_NE(moved.getSnapshotId(), snapshot);
+    EXPECT_EQ(catalog.findId(moved, 20).error(), IndexError::Stale);
+    ASSERT_TRUE(moved.add(Student{20, "Reuse", "Moved", 2000, 4.0}).has_value());
+    EXPECT_EQ(assigned.findById(20)->firstName, "Ivan");
+}
+
+TEST(StudentRepositoryTest, RejectsNonFiniteGpaWithoutChangingDataOrSnapshot) {
+    auto repository = makeRepository();
+    const auto snapshot = repository.getSnapshotId();
+    const Student first = repository.at(0);
+    for (const double gpa : {std::numeric_limits<double>::quiet_NaN(),
+                             std::numeric_limits<double>::infinity(),
+                             -std::numeric_limits<double>::infinity()}) {
+        EXPECT_EQ(repository.add(Student{50, "Bad", "Gpa", 2000, gpa}).error(),
+                  RepositoryError::InvalidGpa);
+        DynamicArray<Student> replacement{
+            Student{60, "Valid", "First", 2000, 4.0}, Student{50, "Bad", "Gpa", 2000, gpa}
+        };
+        EXPECT_EQ(repository.replaceAll(std::move(replacement)).error(), RepositoryError::InvalidGpa);
+        EXPECT_EQ(repository.getCount(), 4U);
+        EXPECT_EQ(repository.at(0), first);
+        EXPECT_EQ(repository.findById(first.id).value(), first);
+        EXPECT_FALSE(repository.findById(50).has_value());
+        EXPECT_FALSE(repository.findById(60).has_value());
+        EXPECT_EQ(repository.getSnapshotId(), snapshot);
+    }
 }

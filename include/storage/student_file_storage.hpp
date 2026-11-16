@@ -16,11 +16,6 @@ public:
         const std::filesystem::path& path
     );
 
-    static std::expected<void, FileFailure> loadInto(
-        const std::filesystem::path& path,
-        StudentRepository& repository
-    );
-
     static std::expected<void, FileFailure> save(
         const std::filesystem::path& path,
         const StudentRepository& repository

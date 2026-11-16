@@ -16,7 +16,6 @@ class StudentRepository {
 private:
     DynamicArray<Student> students_;
     TreeDictionary<std::uint64_t, std::size_t> positionsById_;
-    std::size_t version_{0};
     inline static std::uint64_t nextSnapshotId_{0};
 
     static std::uint64_t newSnapshotId() noexcept {
@@ -26,7 +25,6 @@ private:
     std::uint64_t snapshotId_{newSnapshotId()};
 
     void markChanged() noexcept {
-        ++version_;
         snapshotId_ = newSnapshotId();
     }
 
@@ -34,7 +32,6 @@ private:
         using std::swap;
         swap(students_, other.students_);
         swap(positionsById_, other.positionsById_);
-        swap(version_, other.version_);
         swap(snapshotId_, other.snapshotId_);
     }
 
@@ -52,7 +49,6 @@ public:
 
     StudentRepository(StudentRepository&& other) noexcept
         : students_(std::move(other.students_)), positionsById_(std::move(other.positionsById_)),
-          version_(std::exchange(other.version_, 0)),
           snapshotId_(std::exchange(other.snapshotId_, newSnapshotId())) {}
 
     StudentRepository& operator=(StudentRepository&& other) noexcept {
@@ -65,7 +61,6 @@ public:
 
     std::size_t getCount() const noexcept { return students_.size(); }
     bool getIsEmpty() const noexcept { return students_.empty(); }
-    std::size_t getVersion() const noexcept { return version_; }
     std::uint64_t getSnapshotId() const noexcept { return snapshotId_; }
 
     std::optional<Student> get(std::size_t position) const {

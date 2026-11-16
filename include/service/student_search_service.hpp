@@ -19,7 +19,6 @@ enum class ServiceError {
     IndexStale,
     InvalidRange,
     InvalidKey,
-    UnsupportedStrategy,
     VerificationFailed
 };
 
@@ -33,6 +32,7 @@ private:
             case IndexError::NotBuilt: return ServiceError::IndexNotBuilt;
             case IndexError::Stale: return ServiceError::IndexStale;
             case IndexError::InvalidKey: return ServiceError::InvalidKey;
+            case IndexError::InvalidRange: return ServiceError::InvalidRange;
         }
         return ServiceError::VerificationFailed;
     }
@@ -74,29 +74,6 @@ private:
     static std::expected<DynamicArray<RecordId>, ServiceError> mapIndexResult(ExpectedResult result) {
         if (!result) return std::unexpected(mapIndexError(result.error()));
         return std::move(result.value());
-    }
-
-    template <typename ExpectedResult>
-    static std::expected<DynamicArray<RecordId>, ServiceError> mapRangeResult(ExpectedResult result) {
-        if (!result) {
-            if (result.error() == SearchError::InvalidKey) {
-                return std::unexpected(ServiceError::InvalidKey);
-            }
-            return std::unexpected(
-                result.error() == SearchError::InvalidRange
-                    ? ServiceError::InvalidRange
-                    : ServiceError::VerificationFailed
-            );
-        }
-        return std::move(result.value());
-    }
-
-    static bool equalIds(const DynamicArray<RecordId>& left, const DynamicArray<RecordId>& right) {
-        if (left.size() != right.size()) return false;
-        for (std::size_t index = 0; index < left.size(); ++index) {
-            if (left[index] != right[index]) return false;
-        }
-        return true;
     }
 
 public:
@@ -197,9 +174,7 @@ public:
                 return student.birthYear;
             });
         }
-        if (!indexes_.getIsBuilt()) return std::unexpected(ServiceError::IndexNotBuilt);
-        if (indexes_.getIsStale(repository_)) return std::unexpected(ServiceError::IndexStale);
-        return mapRangeResult(indexes_.findBirthYearRange(repository_, lower, upper));
+        return mapIndexResult(indexes_.findBirthYearRange(repository_, lower, upper));
     }
 
     std::expected<DynamicArray<RecordId>, ServiceError> findGpaRange(
@@ -215,9 +190,7 @@ public:
                 return student.gpa;
             });
         }
-        if (!indexes_.getIsBuilt()) return std::unexpected(ServiceError::IndexNotBuilt);
-        if (indexes_.getIsStale(repository_)) return std::unexpected(ServiceError::IndexStale);
-        return mapRangeResult(indexes_.findGpaRange(repository_, lower, upper));
+        return mapIndexResult(indexes_.findGpaRange(repository_, lower, upper));
     }
 
     std::expected<DynamicArray<RecordId>, ServiceError> findCompositeRange(
@@ -235,29 +208,6 @@ public:
                 StudentCompositeKeyCompare{}
             );
         }
-        if (!indexes_.getIsBuilt()) return std::unexpected(ServiceError::IndexNotBuilt);
-        if (indexes_.getIsStale(repository_)) return std::unexpected(ServiceError::IndexStale);
-        return mapRangeResult(indexes_.findCompositeRange(repository_, lower, upper));
-    }
-
-    std::expected<void, ServiceError> verifyLastName(const std::string& key) const {
-        const auto linear = findByLastName(key, SearchStrategy::Linear);
-        const auto tree = findByLastName(key, SearchStrategy::Tree);
-        const auto binary = findByLastName(key, SearchStrategy::Binary);
-        if (!tree) return std::unexpected(tree.error());
-        if (!binary) return std::unexpected(binary.error());
-        if (!equalIds(*linear, *tree) || !equalIds(*linear, *binary)) {
-            return std::unexpected(ServiceError::VerificationFailed);
-        }
-        return {};
-    }
-
-    std::expected<void, ServiceError> verifyBirthYearRange(int lower, int upper) const {
-        const auto linear = findBirthYearRange(lower, upper, RangeStrategy::Linear);
-        const auto binary = findBirthYearRange(lower, upper, RangeStrategy::Binary);
-        if (!linear) return std::unexpected(linear.error());
-        if (!binary) return std::unexpected(binary.error());
-        if (!equalIds(*linear, *binary)) return std::unexpected(ServiceError::VerificationFailed);
-        return {};
+        return mapIndexResult(indexes_.findCompositeRange(repository_, lower, upper));
     }
 };

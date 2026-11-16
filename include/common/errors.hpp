@@ -6,9 +6,8 @@
 
 enum class DictionaryError { DuplicateKey };
 enum class SequenceError { InvalidRange };
-enum class SearchError { InvalidRange, InvalidKey, UnsupportedStrategy, VerificationFailed };
 enum class RepositoryError { DuplicateId, InvalidGpa };
-enum class IndexError { NotBuilt, Stale, InvalidKey };
+enum class IndexError { NotBuilt, Stale, InvalidKey, InvalidRange };
 
 enum class FileError {
     OpenFailed,
@@ -42,6 +41,7 @@ inline std::string toString(IndexError error) {
         case IndexError::NotBuilt: return "indexes are not built";
         case IndexError::Stale: return "indexes are stale";
         case IndexError::InvalidKey: return "GPA must be finite";
+        case IndexError::InvalidRange: return "range upper bound is below lower bound";
     }
     return "unknown index error";
 }

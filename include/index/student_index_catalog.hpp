@@ -108,7 +108,7 @@ private:
     }
 
     template <typename Key, typename Sequence, typename Compare = std::less<Key>>
-    std::expected<IdGroup, SearchError> findRangeInSequence(
+    std::expected<IdGroup, IndexError> findRangeInSequence(
         const StudentRepository& repository,
         const Sequence& sequence,
         const Key& lower,
@@ -116,9 +116,9 @@ private:
         Compare compare = {}
     ) const {
         if (const auto state = verifyState(repository); !state) {
-            return std::unexpected(SearchError::VerificationFailed);
+            return std::unexpected(state.error());
         }
-        if (compare(upper, lower)) return std::unexpected(SearchError::InvalidRange);
+        if (compare(upper, lower)) return std::unexpected(IndexError::InvalidRange);
         IdGroup result;
         const std::size_t begin = lowerBound(sequence, lower, IndexKeyExtractor<Key>{}, compare);
         const std::size_t end = upperBound(sequence, upper, IndexKeyExtractor<Key>{}, compare);
@@ -189,20 +189,20 @@ public:
         return findInSequence(repository, compositeSequence_, key, StudentCompositeKeyCompare{});
     }
 
-    std::expected<IdGroup, SearchError> findBirthYearRange(
+    std::expected<IdGroup, IndexError> findBirthYearRange(
         const StudentRepository& repository, int lower, int upper
     ) const { return findRangeInSequence(repository, birthYearSequence_, lower, upper); }
 
-    std::expected<IdGroup, SearchError> findGpaRange(
+    std::expected<IdGroup, IndexError> findGpaRange(
         const StudentRepository& repository, double lower, double upper
     ) const {
         if (!std::isfinite(lower) || !std::isfinite(upper)) {
-            return std::unexpected(SearchError::InvalidKey);
+            return std::unexpected(IndexError::InvalidKey);
         }
         return findRangeInSequence(repository, gpaSequence_, lower, upper);
     }
 
-    std::expected<IdGroup, SearchError> findCompositeRange(
+    std::expected<IdGroup, IndexError> findCompositeRange(
         const StudentRepository& repository,
         const StudentCompositeKey& lower,
         const StudentCompositeKey& upper

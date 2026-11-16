@@ -7,7 +7,19 @@
 #include <chrono>
 #include <filesystem>
 #include <fstream>
+#include <limits>
 #include <string>
+
+namespace {
+
+void expectSameIds(const DynamicArray<RecordId>& actual, const DynamicArray<RecordId>& expected) {
+    ASSERT_EQ(actual.size(), expected.size());
+    for (std::size_t index = 0; index < expected.size(); ++index) {
+        EXPECT_EQ(actual[index], expected[index]) << "at position " << index;
+    }
+}
+
+} // namespace
 
 StudentSearchService makeService() {
     StudentSearchService service;
@@ -25,11 +37,13 @@ TEST(StudentSearchServiceTest, ExactStrategiesReturnSameIds) {
     const auto tree = service.findByLastName("Smith", SearchStrategy::Tree).value();
     const auto binary = service.findByLastName("Smith", SearchStrategy::Binary).value();
     ASSERT_EQ(linear.size(), 3U);
-    for (std::size_t index = 0; index < linear.size(); ++index) {
-        EXPECT_EQ(linear[index], tree[index]);
-        EXPECT_EQ(linear[index], binary[index]);
+    expectSameIds(tree, linear);
+    expectSameIds(binary, linear);
+    for (const auto strategy : {SearchStrategy::Linear, SearchStrategy::Tree, SearchStrategy::Binary}) {
+        const auto missing = service.findByLastName("Missing", strategy);
+        ASSERT_TRUE(missing.has_value());
+        EXPECT_TRUE(missing->empty());
     }
-    EXPECT_TRUE(service.verifyLastName("Smith").has_value());
 }
 
 TEST(StudentSearchServiceTest, RangeStrategiesReturnKeyThenIdOrder) {
@@ -41,11 +55,13 @@ TEST(StudentSearchServiceTest, RangeStrategiesReturnKeyThenIdOrder) {
     EXPECT_EQ(linear[1], 1U);
     EXPECT_EQ(linear[2], 3U);
     EXPECT_EQ(linear[3], 4U);
-    for (std::size_t index = 0; index < linear.size(); ++index) EXPECT_EQ(linear[index], binary[index]);
-    EXPECT_TRUE(service.verifyBirthYearRange(2002, 2004).has_value());
+    expectSameIds(binary, linear);
+    for (const auto strategy : {RangeStrategy::Linear, RangeStrategy::Binary}) {
+        EXPECT_EQ(service.findBirthYearRange(2004, 2002, strategy).error(), ServiceError::InvalidRange);
+    }
 }
 
-TEST(StudentSearchServiceTest, ReportsUnsupportedAndStaleIndexes) {
+TEST(StudentSearchServiceTest, ReportsStaleIndexes) {
     auto service = makeService();
     EXPECT_EQ(service.findById(1, SearchStrategy::Binary)->size(), 1U);
     ASSERT_TRUE(service.addStudent(Student{8, "E", "Smith", 2001, 3.9}).has_value());
@@ -53,6 +69,105 @@ TEST(StudentSearchServiceTest, ReportsUnsupportedAndStaleIndexes) {
     EXPECT_EQ(service.findBirthYearRange(2000, 2005, RangeStrategy::Binary).error(),
               ServiceError::IndexStale);
     EXPECT_EQ(service.findByLastName("Smith", SearchStrategy::Linear)->size(), 4U);
+}
+
+TEST(StudentSearchServiceTest, BinaryRangesPreserveCatalogErrorsAndTheirPriority) {
+    StudentSearchService service;
+    for (const auto error : {ServiceError::IndexNotBuilt, ServiceError::IndexStale}) {
+        if (error == ServiceError::IndexStale) {
+            service.buildIndexes();
+            ASSERT_TRUE(service.addStudent(Student{1, "A", "Smith", 2003, 4.5}).has_value());
+        }
+        EXPECT_EQ(service.findBirthYearRange(2002, 2004, RangeStrategy::Binary).error(), error);
+        EXPECT_EQ(service.findGpaRange(4.0, 5.0, RangeStrategy::Binary).error(), error);
+        EXPECT_EQ(service.findCompositeRange(
+            {"Brown", "", 0}, {"Smith", "Z", 9999}, RangeStrategy::Binary
+        ).error(), error);
+        EXPECT_EQ(service.findBirthYearRange(2004, 2002, RangeStrategy::Binary).error(), error);
+        EXPECT_EQ(service.findGpaRange(5.0, 4.0, RangeStrategy::Binary).error(), error);
+        EXPECT_EQ(service.findCompositeRange(
+            {"Smith", "Z", 9999}, {"Brown", "", 0}, RangeStrategy::Binary
+        ).error(), error);
+        EXPECT_EQ(service.findBirthYearRange(2002, 2004, RangeStrategy::Linear)->size(),
+                  service.getRepository().getCount());
+    }
+    service.buildIndexes();
+    EXPECT_EQ(service.findBirthYearRange(2004, 2002, RangeStrategy::Binary).error(),
+              ServiceError::InvalidRange);
+    EXPECT_EQ(service.findGpaRange(5.0, 4.0, RangeStrategy::Binary).error(),
+              ServiceError::InvalidRange);
+    EXPECT_EQ(service.findCompositeRange(
+        {"Smith", "Z", 9999}, {"Brown", "", 0}, RangeStrategy::Binary
+    ).error(), ServiceError::InvalidRange);
+}
+
+TEST(StudentSearchServiceTest, NonFiniteRangeBoundsTakePriorityOverIndexState) {
+    StudentSearchService service;
+    for (int state = 0; state < 3; ++state) {
+        if (state == 1) service.buildIndexes();
+        if (state == 2) {
+            ASSERT_TRUE(service.addStudent(Student{1, "A", "Smith", 2003, 4.5}).has_value());
+        }
+        for (const auto strategy : {RangeStrategy::Linear, RangeStrategy::Binary}) {
+            for (const double invalid : {std::numeric_limits<double>::quiet_NaN(),
+                                         std::numeric_limits<double>::infinity(),
+                                         -std::numeric_limits<double>::infinity()}) {
+                EXPECT_EQ(service.findGpaRange(invalid, 5.0, strategy).error(),
+                          ServiceError::InvalidKey);
+                EXPECT_EQ(service.findGpaRange(4.0, invalid, strategy).error(),
+                          ServiceError::InvalidKey);
+            }
+        }
+    }
+}
+
+TEST(StudentSearchServiceTest, GpaAndCompositeExactStrategiesAgreeIncludingDuplicateKeys) {
+    auto service = makeService();
+    ASSERT_TRUE(service.addStudent(Student{8, "D", "Smith", 2003, 4.5}).has_value());
+    service.buildIndexes();
+    for (const auto strategy : {SearchStrategy::Linear, SearchStrategy::Tree, SearchStrategy::Binary}) {
+        const auto gpa = service.findByGpa(4.5, strategy);
+        ASSERT_TRUE(gpa.has_value());
+        expectSameIds(*gpa, {1, 3, 8});
+        const auto composite = service.findByComposite({"Smith", "D", 2003}, strategy);
+        ASSERT_TRUE(composite.has_value());
+        expectSameIds(*composite, {1, 8});
+        const auto missingGpa = service.findByGpa(0.0, strategy);
+        ASSERT_TRUE(missingGpa.has_value());
+        EXPECT_TRUE(missingGpa->empty());
+        const auto missingComposite = service.findByComposite({"Smith", "D", 2002}, strategy);
+        ASSERT_TRUE(missingComposite.has_value());
+        EXPECT_TRUE(missingComposite->empty());
+    }
+}
+
+TEST(StudentSearchServiceTest, GpaAndCompositeRangesAgreeAndIncludeBothBounds) {
+    auto service = makeService();
+    ASSERT_TRUE(service.addStudent(Student{8, "D", "Smith", 2003, 4.5}).has_value());
+    service.buildIndexes();
+    for (const auto strategy : {RangeStrategy::Linear, RangeStrategy::Binary}) {
+        const auto gpa = service.findGpaRange(4.1, 4.5, strategy);
+        ASSERT_TRUE(gpa.has_value());
+        expectSameIds(*gpa, {4, 1, 3, 8});
+        const auto composite = service.findCompositeRange(
+            {"Smith", "B", 2002}, {"Smith", "D", 2003}, strategy
+        );
+        ASSERT_TRUE(composite.has_value());
+        expectSameIds(*composite, {2, 1, 8});
+        const auto point = service.findCompositeRange(
+            {"Smith", "D", 2003}, {"Smith", "D", 2003}, strategy
+        );
+        ASSERT_TRUE(point.has_value());
+        expectSameIds(*point, {1, 8});
+        const auto empty = service.findCompositeRange(
+            {"Smith", "B", 2003}, {"Smith", "C", 2004}, strategy
+        );
+        ASSERT_TRUE(empty.has_value());
+        EXPECT_TRUE(empty->empty());
+        EXPECT_EQ(service.findCompositeRange(
+            {"Smith", "D", 2003}, {"Smith", "B", 2002}, strategy
+        ).error(), ServiceError::InvalidRange);
+    }
 }
 
 TEST(StudentSearchServiceTest, SupportsCompositeAndGpaQueries) {

@@ -66,13 +66,13 @@ TEST_F(StorageTest, RejectsInvalidDuplicateAndNonFiniteRecords) {
     EXPECT_EQ(StudentFileStorage::load(path_).error().code, FileError::InvalidRecord);
 }
 
-TEST_F(StorageTest, FailedLoadDoesNotChangeRepository) {
-    StudentRepository repository;
-    ASSERT_TRUE(repository.add(Student{7, "Keep", "Me", 2000, 4.0}).has_value());
-    write("DOR2_STUDENT_DATA 1\n1\nbroken\n");
-    EXPECT_FALSE(StudentFileStorage::loadInto(path_, repository).has_value());
-    ASSERT_EQ(repository.getCount(), 1U);
-    EXPECT_EQ(repository.at(0).id, 7U);
+TEST_F(StorageTest, FailedLoadDoesNotReturnPartialData) {
+    write("DOR2_STUDENT_DATA 1\n2\n7:\"Valid\":\"Record\":2000:4\nbroken\n");
+    const auto loaded = StudentFileStorage::load(path_);
+    ASSERT_FALSE(loaded.has_value());
+    EXPECT_EQ(loaded.error().code, FileError::InvalidRecord);
+    EXPECT_EQ(loaded.error().line, 4U);
+    EXPECT_EQ(loaded.error().path, path_);
 }
 
 TEST_F(StorageTest, ReportsOpenFailure) {
