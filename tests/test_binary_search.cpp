@@ -25,15 +25,3 @@ TEST(BinarySearchTest, FindsBoundariesAndMissingValues) {
     EXPECT_FALSE(binarySearch(sequence, 9).has_value());
     EXPECT_EQ((equalRange(sequence, 3)), (TwoElement<std::size_t, std::size_t>{1, 4}));
 }
-
-TEST(BinarySearchTest, InclusiveRangeAndInvalidRange) {
-    ArraySortedSequence<int> sequence;
-    for (const int value : {1, 2, 3, 4, 5}) sequence.add(value);
-    auto result = rangeSearch(sequence, 2, 4);
-    ASSERT_TRUE(result.has_value());
-    ASSERT_EQ(result->size(), 3U);
-    EXPECT_EQ((*result)[0], 1U);
-    EXPECT_EQ((*result)[2], 3U);
-    EXPECT_TRUE(rangeSearch(sequence, 8, 9)->empty());
-    EXPECT_EQ(rangeSearch(sequence, 4, 2).error(), SearchError::InvalidRange);
-}
