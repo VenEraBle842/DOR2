@@ -19,12 +19,12 @@ TEST(StudentIndexCatalogTest, SupportsAllExactIndexes) {
     StudentIndexCatalog catalog;
     catalog.build(repository);
 
-    ASSERT_EQ(catalog.findId(repository, 20)->value(), 2U);
-    ASSERT_EQ(catalog.findLastNameTree(repository, "Smith")->size(), 3U);
-    EXPECT_EQ((*catalog.findLastNameTree(repository, "Smith"))[0], 10U);
-    EXPECT_EQ(catalog.findBirthYearBinary(repository, 2003)->size(), 3U);
-    EXPECT_EQ(catalog.findGpaTree(repository, 4.5)->size(), 2U);
-    EXPECT_EQ(catalog.findCompositeBinary(
+    ASSERT_EQ(catalog.findPositionByIdTree(repository, 20)->value(), 2U);
+    ASSERT_EQ(catalog.findByLastNameTree(repository, "Smith")->size(), 3U);
+    EXPECT_EQ((*catalog.findByLastNameTree(repository, "Smith"))[0], 10U);
+    EXPECT_EQ(catalog.findByBirthYearBinary(repository, 2003)->size(), 3U);
+    EXPECT_EQ(catalog.findByGpaTree(repository, 4.5)->size(), 2U);
+    EXPECT_EQ(catalog.findByCompositeKeyBinary(
         repository, StudentCompositeKey{"Smith", "Ivan", 2003}
     )->size(), 2U);
 }
@@ -33,8 +33,8 @@ TEST(StudentIndexCatalogTest, TreeAndBinaryResultsAreEqualAndUnique) {
     auto repository = makeRepository();
     StudentIndexCatalog catalog;
     catalog.build(repository);
-    const auto tree = catalog.findLastNameTree(repository, "Smith").value();
-    const auto binary = catalog.findLastNameBinary(repository, "Smith").value();
+    const auto tree = catalog.findByLastNameTree(repository, "Smith").value();
+    const auto binary = catalog.findByLastNameBinary(repository, "Smith").value();
     ASSERT_EQ(tree.size(), binary.size());
     for (std::size_t index = 0; index < tree.size(); ++index) EXPECT_EQ(tree[index], binary[index]);
 }
@@ -43,13 +43,13 @@ TEST(StudentIndexCatalogTest, RangeIsInclusiveAndOrderedByKeyThenId) {
     auto repository = makeRepository();
     StudentIndexCatalog catalog;
     catalog.build(repository);
-    const auto years = catalog.findBirthYearRange(repository, 2002, 2003).value();
+    const auto years = catalog.findInBirthYearRangeBinary(repository, 2002, 2003).value();
     ASSERT_EQ(years.size(), 4U);
     EXPECT_EQ(years[0], 10U);
     EXPECT_EQ(years[1], 20U);
     EXPECT_EQ(years[2], 30U);
     EXPECT_EQ(years[3], 40U);
-    EXPECT_EQ(catalog.findGpaRange(repository, 5.0, 4.0).error(), IndexError::InvalidRange);
+    EXPECT_EQ(catalog.findInGpaRangeBinary(repository, 5.0, 4.0).error(), IndexError::InvalidRange);
 }
 
 TEST(StudentIndexCatalogTest, RangeQueriesPreserveStateErrorsBeforeCheckingRangeOrder) {
@@ -60,14 +60,14 @@ TEST(StudentIndexCatalogTest, RangeQueriesPreserveStateErrorsBeforeCheckingRange
             catalog.build(repository);
             ASSERT_TRUE(repository.add(Student{50, "New", "Student", 2000, 4.0}).has_value());
         }
-        EXPECT_EQ(catalog.findBirthYearRange(repository, 2002, 2004).error(), error);
-        EXPECT_EQ(catalog.findGpaRange(repository, 4.0, 5.0).error(), error);
-        EXPECT_EQ(catalog.findCompositeRange(
+        EXPECT_EQ(catalog.findInBirthYearRangeBinary(repository, 2002, 2004).error(), error);
+        EXPECT_EQ(catalog.findInGpaRangeBinary(repository, 4.0, 5.0).error(), error);
+        EXPECT_EQ(catalog.findInCompositeKeyRangeBinary(
             repository, {"Brown", "Ivan", 2003}, {"Smith", "Ivan", 2003}
         ).error(), error);
-        EXPECT_EQ(catalog.findBirthYearRange(repository, 2004, 2002).error(), error);
-        EXPECT_EQ(catalog.findGpaRange(repository, 5.0, 4.0).error(), error);
-        EXPECT_EQ(catalog.findCompositeRange(
+        EXPECT_EQ(catalog.findInBirthYearRangeBinary(repository, 2004, 2002).error(), error);
+        EXPECT_EQ(catalog.findInGpaRangeBinary(repository, 5.0, 4.0).error(), error);
+        EXPECT_EQ(catalog.findInCompositeKeyRangeBinary(
             repository, {"Smith", "Ivan", 2003}, {"Brown", "Ivan", 2003}
         ).error(), error);
     }
@@ -77,28 +77,28 @@ TEST(StudentIndexCatalogTest, RangeQueriesDistinguishInvalidBoundsFromStateError
     auto repository = makeRepository();
     StudentIndexCatalog catalog;
     catalog.build(repository);
-    EXPECT_EQ(catalog.findBirthYearRange(repository, 2004, 2002).error(), IndexError::InvalidRange);
-    EXPECT_EQ(catalog.findGpaRange(repository, 5.0, 4.0).error(), IndexError::InvalidRange);
-    EXPECT_EQ(catalog.findCompositeRange(
+    EXPECT_EQ(catalog.findInBirthYearRangeBinary(repository, 2004, 2002).error(), IndexError::InvalidRange);
+    EXPECT_EQ(catalog.findInGpaRangeBinary(repository, 5.0, 4.0).error(), IndexError::InvalidRange);
+    EXPECT_EQ(catalog.findInCompositeKeyRangeBinary(
         repository, {"Smith", "Ivan", 2003}, {"Brown", "Ivan", 2003}
     ).error(), IndexError::InvalidRange);
     for (const double invalid : {std::numeric_limits<double>::quiet_NaN(),
                                  std::numeric_limits<double>::infinity(),
                                  -std::numeric_limits<double>::infinity()}) {
-        EXPECT_EQ(catalog.findGpaRange(repository, invalid, 5.0).error(), IndexError::InvalidKey);
-        EXPECT_EQ(catalog.findGpaRange(repository, 4.0, invalid).error(), IndexError::InvalidKey);
+        EXPECT_EQ(catalog.findInGpaRangeBinary(repository, invalid, 5.0).error(), IndexError::InvalidKey);
+        EXPECT_EQ(catalog.findInGpaRangeBinary(repository, 4.0, invalid).error(), IndexError::InvalidKey);
     }
 }
 
 TEST(StudentIndexCatalogTest, DetectsNotBuiltAndStaleThenRebuilds) {
     auto repository = makeRepository();
     StudentIndexCatalog catalog;
-    EXPECT_EQ(catalog.findLastNameTree(repository, "Smith").error(), IndexError::NotBuilt);
+    EXPECT_EQ(catalog.findByLastNameTree(repository, "Smith").error(), IndexError::NotBuilt);
     catalog.build(repository);
     ASSERT_TRUE(repository.add(Student{50, "Nina", "Smith", 2001, 4.2}).has_value());
-    EXPECT_EQ(catalog.findLastNameTree(repository, "Smith").error(), IndexError::Stale);
+    EXPECT_EQ(catalog.findByLastNameTree(repository, "Smith").error(), IndexError::Stale);
     catalog.build(repository);
-    EXPECT_EQ(catalog.findLastNameTree(repository, "Smith")->size(), 4U);
+    EXPECT_EQ(catalog.findByLastNameTree(repository, "Smith")->size(), 4U);
 }
 
 TEST(StudentRepositoryTest, RejectsDuplicateAndReplacementIsTransactional) {
@@ -118,13 +118,13 @@ TEST(StudentIndexCatalogTest, RejectsAnotherRepositoryWithSameSizeAndNumberOfCha
     StudentIndexCatalog catalog;
     catalog.build(original);
     EXPECT_NE(original.getSnapshotId(), unrelated.getSnapshotId());
-    EXPECT_EQ(catalog.findId(unrelated, 20).error(), IndexError::Stale);
-    EXPECT_EQ(catalog.findLastNameTree(unrelated, "Smith").error(), IndexError::Stale);
-    EXPECT_EQ(catalog.findLastNameBinary(unrelated, "Smith").error(), IndexError::Stale);
+    EXPECT_EQ(catalog.findPositionByIdTree(unrelated, 20).error(), IndexError::Stale);
+    EXPECT_EQ(catalog.findByLastNameTree(unrelated, "Smith").error(), IndexError::Stale);
+    EXPECT_EQ(catalog.findByLastNameBinary(unrelated, "Smith").error(), IndexError::Stale);
     EXPECT_EQ(catalog.getStatistics(unrelated).error(), IndexError::Stale);
-    EXPECT_EQ(catalog.findBirthYearRange(unrelated, 2002, 2004).error(), IndexError::Stale);
-    EXPECT_EQ(catalog.findGpaRange(unrelated, 4.0, 5.0).error(), IndexError::Stale);
-    EXPECT_EQ(catalog.findCompositeRange(
+    EXPECT_EQ(catalog.findInBirthYearRangeBinary(unrelated, 2002, 2004).error(), IndexError::Stale);
+    EXPECT_EQ(catalog.findInGpaRangeBinary(unrelated, 4.0, 5.0).error(), IndexError::Stale);
+    EXPECT_EQ(catalog.findInCompositeKeyRangeBinary(
         unrelated, {"Brown", "Ivan", 2003}, {"Smith", "Ivan", 2003}
     ).error(), IndexError::Stale);
 }
@@ -139,15 +139,15 @@ TEST(StudentRepositoryTest, CopiesShareSnapshotUntilIndependentlyChanged) {
     assigned = original;
     EXPECT_EQ(copy.getSnapshotId(), original.getSnapshotId());
     EXPECT_EQ(assigned.getSnapshotId(), original.getSnapshotId());
-    EXPECT_EQ(catalog.findId(copy, 20)->value(), 2U);
-    EXPECT_EQ(catalog.findId(assigned, 20)->value(), 2U);
+    EXPECT_EQ(catalog.findPositionByIdTree(copy, 20)->value(), 2U);
+    EXPECT_EQ(catalog.findPositionByIdTree(assigned, 20)->value(), 2U);
     EXPECT_FALSE(assigned.findById(99).has_value());
     ASSERT_TRUE(copy.add(Student{50, "New", "Student", 2000, 4.0}).has_value());
-    EXPECT_EQ(catalog.findId(copy, 20).error(), IndexError::Stale);
+    EXPECT_EQ(catalog.findPositionByIdTree(copy, 20).error(), IndexError::Stale);
     EXPECT_FALSE(original.findById(50).has_value());
     assigned.clear();
-    EXPECT_EQ(catalog.findId(assigned, 20).error(), IndexError::Stale);
-    EXPECT_EQ(catalog.findId(original, 20)->value(), 2U);
+    EXPECT_EQ(catalog.findPositionByIdTree(assigned, 20).error(), IndexError::Stale);
+    EXPECT_EQ(catalog.findPositionByIdTree(original, 20)->value(), 2U);
     EXPECT_EQ(original.getCount(), 4U);
 }
 
@@ -158,10 +158,10 @@ TEST(StudentRepositoryTest, MovesTransferSnapshotAndResetSource) {
     const auto snapshot = source.getSnapshotId();
     auto moved = std::move(source);
     EXPECT_EQ(moved.getSnapshotId(), snapshot);
-    EXPECT_EQ(catalog.findId(moved, 20)->value(), 2U);
+    EXPECT_EQ(catalog.findPositionByIdTree(moved, 20)->value(), 2U);
     EXPECT_EQ(source.getCount(), 0U);
     EXPECT_NE(source.getSnapshotId(), snapshot);
-    EXPECT_EQ(catalog.findId(source, 20).error(), IndexError::Stale);
+    EXPECT_EQ(catalog.findPositionByIdTree(source, 20).error(), IndexError::Stale);
     ASSERT_TRUE(source.add(Student{20, "Reuse", "Source", 2000, 4.0}).has_value());
     EXPECT_EQ(moved.findById(20)->firstName, "Ivan");
 
@@ -170,11 +170,11 @@ TEST(StudentRepositoryTest, MovesTransferSnapshotAndResetSource) {
     oldCatalog.build(assigned);
     assigned = std::move(moved);
     EXPECT_EQ(assigned.getSnapshotId(), snapshot);
-    EXPECT_EQ(catalog.findId(assigned, 20)->value(), 2U);
-    EXPECT_EQ(oldCatalog.findId(assigned, 20).error(), IndexError::Stale);
+    EXPECT_EQ(catalog.findPositionByIdTree(assigned, 20)->value(), 2U);
+    EXPECT_EQ(oldCatalog.findPositionByIdTree(assigned, 20).error(), IndexError::Stale);
     EXPECT_EQ(moved.getCount(), 0U);
     EXPECT_NE(moved.getSnapshotId(), snapshot);
-    EXPECT_EQ(catalog.findId(moved, 20).error(), IndexError::Stale);
+    EXPECT_EQ(catalog.findPositionByIdTree(moved, 20).error(), IndexError::Stale);
     ASSERT_TRUE(moved.add(Student{20, "Reuse", "Moved", 2000, 4.0}).has_value());
     EXPECT_EQ(assigned.findById(20)->firstName, "Ivan");
 }

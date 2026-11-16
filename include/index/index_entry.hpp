@@ -25,6 +25,6 @@ struct IndexEntryCompare {
 };
 
 template <typename TKey>
-struct IndexKeyExtractor {
+struct IndexEntryKeyExtractor {
     const TKey& operator()(const IndexEntry<TKey>& entry) const noexcept { return entry.key; }
 };

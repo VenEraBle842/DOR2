@@ -25,7 +25,7 @@ struct FileFailure {
     FileError code{FileError::ReadFailed};
     std::string message;
     std::filesystem::path path;
-    std::size_t line{0};
+    std::size_t lineNumber{0};
 };
 
 inline std::string toString(RepositoryError error) {

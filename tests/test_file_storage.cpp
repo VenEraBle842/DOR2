@@ -71,7 +71,7 @@ TEST_F(StorageTest, FailedLoadDoesNotReturnPartialData) {
     const auto loaded = StudentFileStorage::load(path_);
     ASSERT_FALSE(loaded.has_value());
     EXPECT_EQ(loaded.error().code, FileError::InvalidRecord);
-    EXPECT_EQ(loaded.error().line, 4U);
+    EXPECT_EQ(loaded.error().lineNumber, 4U);
     EXPECT_EQ(loaded.error().path, path_);
 }
 

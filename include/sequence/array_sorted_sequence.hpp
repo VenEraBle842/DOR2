@@ -26,7 +26,7 @@ public:
     ~ArraySortedSequence() override = default;
 
     std::size_t getLength() const noexcept override { return items_.size(); }
-    bool getIsEmpty() const noexcept override { return items_.empty(); }
+    bool isEmpty() const noexcept override { return items_.empty(); }
 
     std::optional<T> get(std::size_t index) const override {
         if (index >= items_.size()) return std::nullopt;

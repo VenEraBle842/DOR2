@@ -23,7 +23,7 @@ struct BatchResult {
     std::uint64_t checksum{0};
 };
 
-volatile std::uint64_t resultSink{0};
+volatile std::uint64_t benchmarkChecksumSink{0};
 
 std::string orderName(InputOrder order) {
     switch (order) {
@@ -34,7 +34,7 @@ std::string orderName(InputOrder order) {
     return "Unknown";
 }
 
-DynamicArray<int> makeValues(std::size_t size, InputOrder order, std::uint64_t seed) {
+DynamicArray<int> makeInputKeys(std::size_t size, InputOrder order, std::uint64_t seed) {
     DynamicArray<int> values;
     for (std::size_t index = 0; index < size; ++index) {
         const std::size_t source = order == InputOrder::Descending ? size - index - 1 : index;
@@ -53,7 +53,7 @@ DynamicArray<int> makeValues(std::size_t size, InputOrder order, std::uint64_t s
     return values;
 }
 
-DynamicArray<int> makeQueries(std::size_t size, std::size_t count, std::uint64_t seed) {
+DynamicArray<int> makeExactQueries(std::size_t size, std::size_t count, std::uint64_t seed) {
     DynamicArray<int> queries;
     std::mt19937_64 generator(seed + 17U);
     const int upper = static_cast<int>(size == 0 ? 1 : size - 1);
@@ -83,7 +83,7 @@ DynamicArray<TwoElement<int, int>> makeRangeQueries(std::size_t size, std::size_
     return queries;
 }
 
-std::expected<StudentSearchService, RepositoryError> makeService(
+std::expected<StudentSearchService, RepositoryError> makeBenchmarkService(
     const DynamicArray<int>& values
 ) {
     DynamicArray<Student> students;
@@ -103,14 +103,14 @@ std::expected<StudentSearchService, RepositoryError> makeService(
 template <typename Action>
 Measurement measureMedian(Action action) {
     constexpr std::size_t repetitions = 5;
-    resultSink = action().checksum;
+    benchmarkChecksumSink = action().checksum;
     ArraySortedSequence<double> samples;
     std::size_t matches = 0;
     for (std::size_t repetition = 0; repetition < repetitions; ++repetition) {
         const auto start = std::chrono::steady_clock::now();
         const BatchResult batch = action();
         const auto finish = std::chrono::steady_clock::now();
-        resultSink = batch.checksum;
+        benchmarkChecksumSink = batch.checksum;
         matches = batch.matchCount;
         const auto elapsed = std::chrono::duration<double, std::micro>(finish - start).count();
         samples.add(elapsed);
@@ -125,7 +125,7 @@ std::expected<Measurement, BenchmarkFailure> measureBuild(Builder builder) {
         Structure warmup;
         const auto built = builder(warmup);
         if (!built) return std::unexpected(built.error());
-        resultSink = *built;
+        benchmarkChecksumSink = *built;
     }
     ArraySortedSequence<double> samples;
     std::size_t count = 0;
@@ -136,7 +136,7 @@ std::expected<Measurement, BenchmarkFailure> measureBuild(Builder builder) {
         const auto finish = std::chrono::steady_clock::now();
         if (!built) return std::unexpected(built.error());
         count = *built;
-        resultSink = count;
+        benchmarkChecksumSink = count;
         samples.add(std::chrono::duration<double, std::micro>(finish - start).count());
     }
     return Measurement{samples.at(repetitions / 2), count};
@@ -153,9 +153,9 @@ bool sameIds(const std::expected<DynamicArray<RecordId>, ServiceError>& left,
 
 bool verifyExact(const StudentSearchService& service, const DynamicArray<int>& queries) {
     for (const int query : queries) {
-        const auto reference = service.findByBirthYear(query, SearchStrategy::Linear);
-        if (!sameIds(reference, service.findByBirthYear(query, SearchStrategy::Tree)) ||
-            !sameIds(reference, service.findByBirthYear(query, SearchStrategy::Binary))) return false;
+        const auto reference = service.findByBirthYear(query, ExactSearchStrategy::Linear);
+        if (!sameIds(reference, service.findByBirthYear(query, ExactSearchStrategy::Tree)) ||
+            !sameIds(reference, service.findByBirthYear(query, ExactSearchStrategy::Binary))) return false;
     }
     return true;
 }
@@ -165,13 +165,13 @@ bool verifyRanges(
     const DynamicArray<TwoElement<int, int>>& queries
 ) {
     for (const auto& query : queries) {
-        if (!sameIds(service.findBirthYearRange(query.first, query.second, RangeStrategy::Linear),
-                     service.findBirthYearRange(query.first, query.second, RangeStrategy::Binary))) return false;
+        if (!sameIds(service.findInBirthYearRange(query.first, query.second, RangeSearchStrategy::Linear),
+                     service.findInBirthYearRange(query.first, query.second, RangeSearchStrategy::Binary))) return false;
     }
     return true;
 }
 
-void consume(
+void accumulateSearchResult(
     BatchResult& batch,
     const std::expected<DynamicArray<RecordId>, ServiceError>& ids
 ) {
@@ -184,24 +184,24 @@ void consume(
     for (const RecordId id : *ids) batch.checksum = (batch.checksum ^ id) * 1099511628211ULL;
 }
 
-BatchResult exactBatch(
+BatchResult runExactSearchBatch(
     const StudentSearchService& service,
     const DynamicArray<int>& queries,
-    SearchStrategy strategy
+    ExactSearchStrategy strategy
 ) {
     BatchResult batch;
-    for (const int query : queries) consume(batch, service.findByBirthYear(query, strategy));
+    for (const int query : queries) accumulateSearchResult(batch, service.findByBirthYear(query, strategy));
     return batch;
 }
 
-BatchResult rangeBatch(
+BatchResult runRangeSearchBatch(
     const StudentSearchService& service,
     const DynamicArray<TwoElement<int, int>>& queries,
-    RangeStrategy strategy
+    RangeSearchStrategy strategy
 ) {
     BatchResult batch;
     for (const auto& query : queries) {
-        consume(batch, service.findBirthYearRange(query.first, query.second, strategy));
+        accumulateSearchResult(batch, service.findInBirthYearRange(query.first, query.second, strategy));
     }
     return batch;
 }
@@ -238,8 +238,8 @@ std::expected<DynamicArray<BenchmarkResult>, BenchmarkFailure> BenchmarkRunner::
     DynamicArray<BenchmarkResult> results;
     for (int orderNumber = 0; orderNumber < 3; ++orderNumber) {
         const auto order = static_cast<InputOrder>(orderNumber);
-        const DynamicArray<int> values = makeValues(datasetSize, order, seed);
-        const DynamicArray<int> queries = makeQueries(datasetSize, queryCount, seed);
+        const DynamicArray<int> values = makeInputKeys(datasetSize, order, seed);
+        const DynamicArray<int> queries = makeExactQueries(datasetSize, queryCount, seed);
         const auto rangeQueries = makeRangeQueries(datasetSize, queryCount);
         const std::string name = orderName(order);
 
@@ -269,7 +269,7 @@ std::expected<DynamicArray<BenchmarkResult>, BenchmarkFailure> BenchmarkRunner::
         appendResult(results, datasetSize, name, "ArraySortedSequence", "Build", 1,
                      *sortedBuild, seed, sortedBuild->matchCount == datasetSize);
 
-        const auto prepared = makeService(values);
+        const auto prepared = makeBenchmarkService(values);
         if (!prepared) {
             return std::unexpected(BenchmarkFailure{
                 BenchmarkError::PreparationFailed,
@@ -279,21 +279,21 @@ std::expected<DynamicArray<BenchmarkResult>, BenchmarkFailure> BenchmarkRunner::
         const StudentSearchService& service = *prepared;
         const bool exactVerified = verifyExact(service, queries);
         appendResult(results, datasetSize, name, "Linear", "ExactSearch", queryCount,
-                     measureMedian([&]() { return exactBatch(service, queries, SearchStrategy::Linear); }),
+                     measureMedian([&]() { return runExactSearchBatch(service, queries, ExactSearchStrategy::Linear); }),
                      seed, exactVerified);
         appendResult(results, datasetSize, name, "TreeDictionary", "ExactSearch", queryCount,
-                     measureMedian([&]() { return exactBatch(service, queries, SearchStrategy::Tree); }),
+                     measureMedian([&]() { return runExactSearchBatch(service, queries, ExactSearchStrategy::Tree); }),
                      seed, exactVerified);
         appendResult(results, datasetSize, name, "BinarySearch", "ExactSearch", queryCount,
-                     measureMedian([&]() { return exactBatch(service, queries, SearchStrategy::Binary); }),
+                     measureMedian([&]() { return runExactSearchBatch(service, queries, ExactSearchStrategy::Binary); }),
                      seed, exactVerified);
 
         const bool rangeVerified = verifyRanges(service, rangeQueries);
         appendResult(results, datasetSize, name, "Linear", "RangeSearch", queryCount,
-                     measureMedian([&]() { return rangeBatch(service, rangeQueries, RangeStrategy::Linear); }),
+                     measureMedian([&]() { return runRangeSearchBatch(service, rangeQueries, RangeSearchStrategy::Linear); }),
                      seed, rangeVerified);
         appendResult(results, datasetSize, name, "BinarySearch", "RangeSearch", queryCount,
-                     measureMedian([&]() { return rangeBatch(service, rangeQueries, RangeStrategy::Binary); }),
+                     measureMedian([&]() { return runRangeSearchBatch(service, rangeQueries, RangeSearchStrategy::Binary); }),
                      seed, rangeVerified);
     }
     return results;
@@ -303,9 +303,9 @@ std::expected<void, FileFailure> BenchmarkRunner::saveCsv(
     const std::filesystem::path& path,
     const DynamicArray<BenchmarkResult>& results
 ) {
-    std::filesystem::path temporary = path;
-    temporary += ".tmp";
-    std::ofstream output(temporary, std::ios::trunc);
+    std::filesystem::path temporaryPath = path;
+    temporaryPath += ".tmp";
+    std::ofstream output(temporaryPath, std::ios::trunc);
     output.imbue(std::locale::classic());
     if (!output.is_open()) {
         return std::unexpected(FileFailure{
@@ -323,17 +323,17 @@ std::expected<void, FileFailure> BenchmarkRunner::saveCsv(
     if (!output) {
         output.close();
         std::error_code ignored;
-        std::filesystem::remove(temporary, ignored);
+        std::filesystem::remove(temporaryPath, ignored);
         return std::unexpected(FileFailure{
             FileError::WriteFailed, "failed to write benchmark CSV", path, 0
         });
     }
     output.close();
     std::error_code renameError;
-    std::filesystem::rename(temporary, path, renameError);
+    std::filesystem::rename(temporaryPath, path, renameError);
     if (renameError) {
         std::error_code ignored;
-        std::filesystem::remove(temporary, ignored);
+        std::filesystem::remove(temporaryPath, ignored);
         return std::unexpected(FileFailure{
             FileError::WriteFailed, renameError.message(), path, 0
         });

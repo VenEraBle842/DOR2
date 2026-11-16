@@ -17,38 +17,39 @@
 #include <string>
 
 struct StudentIndexStatistics {
-    std::size_t records{0};
-    std::size_t lastNameKeys{0};
-    std::size_t birthYearKeys{0};
-    std::size_t gpaKeys{0};
-    std::size_t compositeKeys{0};
+    std::size_t recordCount{0};
+    std::size_t lastNameKeyCount{0};
+    std::size_t birthYearKeyCount{0};
+    std::size_t gpaKeyCount{0};
+    std::size_t compositeKeyCount{0};
 };
 
 class StudentIndexCatalog {
 private:
-    using IdGroup = DynamicArray<RecordId>;
-    using IdSequence = ArraySortedSequence<IndexEntry<RecordId>, IndexEntryCompare<RecordId>>;
-    using LastNameSequence = ArraySortedSequence<IndexEntry<std::string>, IndexEntryCompare<std::string>>;
-    using BirthYearSequence = ArraySortedSequence<IndexEntry<int>, IndexEntryCompare<int>>;
-    using GpaSequence = ArraySortedSequence<IndexEntry<double>, IndexEntryCompare<double>>;
-    using CompositeSequence = ArraySortedSequence<IndexEntry<StudentCompositeKey>,
+    using RecordIds = DynamicArray<RecordId>;
+    using IdSortedArrayIndex = ArraySortedSequence<IndexEntry<RecordId>, IndexEntryCompare<RecordId>>;
+    using LastNameSortedArrayIndex = ArraySortedSequence<IndexEntry<std::string>,
+        IndexEntryCompare<std::string>>;
+    using BirthYearSortedArrayIndex = ArraySortedSequence<IndexEntry<int>, IndexEntryCompare<int>>;
+    using GpaSortedArrayIndex = ArraySortedSequence<IndexEntry<double>, IndexEntryCompare<double>>;
+    using CompositeSortedArrayIndex = ArraySortedSequence<IndexEntry<StudentCompositeKey>,
         IndexEntryCompare<StudentCompositeKey, StudentCompositeKeyCompare>>;
 
-    TreeDictionary<RecordId, std::size_t> idIndex_;
-    TreeDictionary<std::string, IdGroup> lastNameIndex_;
-    TreeDictionary<int, IdGroup> birthYearIndex_;
-    TreeDictionary<double, IdGroup> gpaIndex_;
-    TreeDictionary<StudentCompositeKey, IdGroup, StudentCompositeKeyCompare> compositeIndex_;
+    TreeDictionary<RecordId, std::size_t> idTreeIndex_;
+    TreeDictionary<std::string, RecordIds> lastNameTreeIndex_;
+    TreeDictionary<int, RecordIds> birthYearTreeIndex_;
+    TreeDictionary<double, RecordIds> gpaTreeIndex_;
+    TreeDictionary<StudentCompositeKey, RecordIds, StudentCompositeKeyCompare> compositeTreeIndex_;
 
-    IdSequence idSequence_;
-    LastNameSequence lastNameSequence_;
-    BirthYearSequence birthYearSequence_;
-    GpaSequence gpaSequence_;
-    CompositeSequence compositeSequence_;
+    IdSortedArrayIndex idSortedArrayIndex_;
+    LastNameSortedArrayIndex lastNameSortedArrayIndex_;
+    BirthYearSortedArrayIndex birthYearSortedArrayIndex_;
+    GpaSortedArrayIndex gpaSortedArrayIndex_;
+    CompositeSortedArrayIndex compositeSortedArrayIndex_;
 
-    std::optional<std::uint64_t> builtSnapshotId_;
+    std::optional<std::uint64_t> indexedSnapshotId_;
 
-    static void insertRecordId(IdGroup& group, RecordId id) {
+    static void insertRecordId(RecordIds& group, RecordId id) {
         std::size_t position = 0;
         while (position < group.size() && group[position] < id) ++position;
         if (position < group.size() && group[position] == id) return;
@@ -60,12 +61,12 @@ private:
     }
 
     template <typename Key, typename Compare>
-    static void addToGroup(TreeDictionary<Key, IdGroup, Compare>& dictionary, const Key& key, RecordId id) {
-        const bool updated = dictionary.modify(key, [id](IdGroup& group) {
+    static void addToGroup(TreeDictionary<Key, RecordIds, Compare>& dictionary, const Key& key, RecordId id) {
+        const bool updated = dictionary.modify(key, [id](RecordIds& group) {
             insertRecordId(group, id);
         });
         if (!updated) {
-            IdGroup ids;
+            RecordIds ids;
             ids.push_back(id);
             const auto inserted = dictionary.add(key, ids);
             if (!inserted) {
@@ -74,33 +75,33 @@ private:
         }
     }
 
-    std::expected<void, IndexError> verifyState(const StudentRepository& repository) const {
-        if (!builtSnapshotId_) return std::unexpected(IndexError::NotBuilt);
-        if (*builtSnapshotId_ != repository.getSnapshotId()) return std::unexpected(IndexError::Stale);
+    std::expected<void, IndexError> checkIndexState(const StudentRepository& repository) const {
+        if (!indexedSnapshotId_) return std::unexpected(IndexError::NotBuilt);
+        if (*indexedSnapshotId_ != repository.getSnapshotId()) return std::unexpected(IndexError::Stale);
         return {};
     }
 
     template <typename Key, typename Compare>
-    std::expected<IdGroup, IndexError> findInTree(
+    std::expected<RecordIds, IndexError> findExactTree(
         const StudentRepository& repository,
-        const TreeDictionary<Key, IdGroup, Compare>& dictionary,
+        const TreeDictionary<Key, RecordIds, Compare>& dictionary,
         const Key& key
     ) const {
-        if (const auto state = verifyState(repository); !state) return std::unexpected(state.error());
+        if (const auto state = checkIndexState(repository); !state) return std::unexpected(state.error());
         const auto group = dictionary.find(key);
-        return group.value_or(IdGroup{});
+        return group.value_or(RecordIds{});
     }
 
     template <typename Key, typename Sequence, typename Compare = std::less<Key>>
-    std::expected<IdGroup, IndexError> findInSequence(
+    std::expected<RecordIds, IndexError> findExactBinary(
         const StudentRepository& repository,
         const Sequence& sequence,
         const Key& key,
         Compare compare = {}
     ) const {
-        if (const auto state = verifyState(repository); !state) return std::unexpected(state.error());
-        IdGroup result;
-        const auto range = equalRange(sequence, key, IndexKeyExtractor<Key>{}, compare);
+        if (const auto state = checkIndexState(repository); !state) return std::unexpected(state.error());
+        RecordIds result;
+        const auto range = equalRange(sequence, key, IndexEntryKeyExtractor<Key>{}, compare);
         for (std::size_t position = range.first; position < range.second; ++position) {
             result.push_back(sequence.at(position).recordId);
         }
@@ -108,20 +109,20 @@ private:
     }
 
     template <typename Key, typename Sequence, typename Compare = std::less<Key>>
-    std::expected<IdGroup, IndexError> findRangeInSequence(
+    std::expected<RecordIds, IndexError> findRangeBinary(
         const StudentRepository& repository,
         const Sequence& sequence,
         const Key& lower,
         const Key& upper,
         Compare compare = {}
     ) const {
-        if (const auto state = verifyState(repository); !state) {
+        if (const auto state = checkIndexState(repository); !state) {
             return std::unexpected(state.error());
         }
         if (compare(upper, lower)) return std::unexpected(IndexError::InvalidRange);
-        IdGroup result;
-        const std::size_t begin = lowerBound(sequence, lower, IndexKeyExtractor<Key>{}, compare);
-        const std::size_t end = upperBound(sequence, upper, IndexKeyExtractor<Key>{}, compare);
+        RecordIds result;
+        const std::size_t begin = lowerBound(sequence, lower, IndexEntryKeyExtractor<Key>{}, compare);
+        const std::size_t end = upperBound(sequence, upper, IndexEntryKeyExtractor<Key>{}, compare);
         for (std::size_t position = begin; position < end; ++position) {
             result.push_back(sequence.at(position).recordId);
         }
@@ -131,84 +132,84 @@ private:
 public:
     void build(const StudentRepository& repository);
 
-    bool getIsBuilt() const noexcept { return builtSnapshotId_.has_value(); }
-    bool getIsStale(const StudentRepository& repository) const noexcept {
-        return builtSnapshotId_.has_value() && *builtSnapshotId_ != repository.getSnapshotId();
+    bool isBuilt() const noexcept { return indexedSnapshotId_.has_value(); }
+    bool isStale(const StudentRepository& repository) const noexcept {
+        return indexedSnapshotId_.has_value() && *indexedSnapshotId_ != repository.getSnapshotId();
     }
 
     std::expected<StudentIndexStatistics, IndexError> getStatistics(
         const StudentRepository& repository
     ) const;
 
-    std::expected<std::optional<std::size_t>, IndexError> findId(
+    std::expected<std::optional<std::size_t>, IndexError> findPositionByIdTree(
         const StudentRepository& repository,
         RecordId id
     ) const;
 
-    std::expected<IdGroup, IndexError> findIdBinary(
+    std::expected<RecordIds, IndexError> findByIdBinary(
         const StudentRepository& repository, RecordId id
-    ) const { return findInSequence(repository, idSequence_, id); }
+    ) const { return findExactBinary(repository, idSortedArrayIndex_, id); }
 
-    std::expected<IdGroup, IndexError> findLastNameTree(
+    std::expected<RecordIds, IndexError> findByLastNameTree(
         const StudentRepository& repository, const std::string& key
-    ) const { return findInTree(repository, lastNameIndex_, key); }
+    ) const { return findExactTree(repository, lastNameTreeIndex_, key); }
 
-    std::expected<IdGroup, IndexError> findLastNameBinary(
+    std::expected<RecordIds, IndexError> findByLastNameBinary(
         const StudentRepository& repository, const std::string& key
-    ) const { return findInSequence(repository, lastNameSequence_, key); }
+    ) const { return findExactBinary(repository, lastNameSortedArrayIndex_, key); }
 
-    std::expected<IdGroup, IndexError> findBirthYearTree(
+    std::expected<RecordIds, IndexError> findByBirthYearTree(
         const StudentRepository& repository, int key
-    ) const { return findInTree(repository, birthYearIndex_, key); }
+    ) const { return findExactTree(repository, birthYearTreeIndex_, key); }
 
-    std::expected<IdGroup, IndexError> findBirthYearBinary(
+    std::expected<RecordIds, IndexError> findByBirthYearBinary(
         const StudentRepository& repository, int key
-    ) const { return findInSequence(repository, birthYearSequence_, key); }
+    ) const { return findExactBinary(repository, birthYearSortedArrayIndex_, key); }
 
-    std::expected<IdGroup, IndexError> findGpaTree(
+    std::expected<RecordIds, IndexError> findByGpaTree(
         const StudentRepository& repository, double key
     ) const {
         if (!std::isfinite(key)) return std::unexpected(IndexError::InvalidKey);
-        return findInTree(repository, gpaIndex_, key);
+        return findExactTree(repository, gpaTreeIndex_, key);
     }
 
-    std::expected<IdGroup, IndexError> findGpaBinary(
+    std::expected<RecordIds, IndexError> findByGpaBinary(
         const StudentRepository& repository, double key
     ) const {
         if (!std::isfinite(key)) return std::unexpected(IndexError::InvalidKey);
-        return findInSequence(repository, gpaSequence_, key);
+        return findExactBinary(repository, gpaSortedArrayIndex_, key);
     }
 
-    std::expected<IdGroup, IndexError> findCompositeTree(
+    std::expected<RecordIds, IndexError> findByCompositeKeyTree(
         const StudentRepository& repository, const StudentCompositeKey& key
-    ) const { return findInTree(repository, compositeIndex_, key); }
+    ) const { return findExactTree(repository, compositeTreeIndex_, key); }
 
-    std::expected<IdGroup, IndexError> findCompositeBinary(
+    std::expected<RecordIds, IndexError> findByCompositeKeyBinary(
         const StudentRepository& repository, const StudentCompositeKey& key
     ) const {
-        return findInSequence(repository, compositeSequence_, key, StudentCompositeKeyCompare{});
+        return findExactBinary(repository, compositeSortedArrayIndex_, key, StudentCompositeKeyCompare{});
     }
 
-    std::expected<IdGroup, IndexError> findBirthYearRange(
+    std::expected<RecordIds, IndexError> findInBirthYearRangeBinary(
         const StudentRepository& repository, int lower, int upper
-    ) const { return findRangeInSequence(repository, birthYearSequence_, lower, upper); }
+    ) const { return findRangeBinary(repository, birthYearSortedArrayIndex_, lower, upper); }
 
-    std::expected<IdGroup, IndexError> findGpaRange(
+    std::expected<RecordIds, IndexError> findInGpaRangeBinary(
         const StudentRepository& repository, double lower, double upper
     ) const {
         if (!std::isfinite(lower) || !std::isfinite(upper)) {
             return std::unexpected(IndexError::InvalidKey);
         }
-        return findRangeInSequence(repository, gpaSequence_, lower, upper);
+        return findRangeBinary(repository, gpaSortedArrayIndex_, lower, upper);
     }
 
-    std::expected<IdGroup, IndexError> findCompositeRange(
+    std::expected<RecordIds, IndexError> findInCompositeKeyRangeBinary(
         const StudentRepository& repository,
         const StudentCompositeKey& lower,
         const StudentCompositeKey& upper
     ) const {
-        return findRangeInSequence(
-            repository, compositeSequence_, lower, upper, StudentCompositeKeyCompare{}
+        return findRangeBinary(
+            repository, compositeSortedArrayIndex_, lower, upper, StudentCompositeKeyCompare{}
         );
     }
 };

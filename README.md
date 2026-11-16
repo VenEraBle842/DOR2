@@ -32,6 +32,15 @@
 
 Шаблонные структуры и алгоритмы реализованы в заголовочных файлах. `StudentSearchService` объединяет репозиторий исходных записей и каталог индексов.
 
+Имена полей индексов следуют схеме «атрибут → структура → назначение»: `idTreeIndex_`, `idSortedArrayIndex_`. В каталоге методы точного поиска называются `findBy…Tree` и `findBy…Binary`, диапазонного — `findIn…RangeBinary`. Метод `findPositionByIdTree` возвращает позицию записи; остальные поисковые методы каталога возвращают массивы ID.
+
+В сервисе алгоритм задаётся параметром:
+
+```cpp
+service.findByBirthYear(2003, ExactSearchStrategy::Tree);
+service.findInBirthYearRange(2002, 2004, RangeSearchStrategy::Binary);
+```
+
 ## Требования и сборка
 
 - Компилятор и стандартная библиотека с поддержкой C++23.

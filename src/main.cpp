@@ -50,7 +50,7 @@ std::optional<T> readNumber(const std::string& prompt) {
     return value;
 }
 
-std::optional<std::size_t> readSize(const std::string& prompt, std::size_t maximum) {
+std::optional<std::size_t> readBoundedSize(const std::string& prompt, std::size_t maximum) {
     const auto value = readNumber<std::size_t>(prompt);
     if (value && *value > maximum) {
         std::cout << "Value must not exceed " << maximum << ".\n";
@@ -72,29 +72,29 @@ std::string serviceErrorMessage(ServiceError error) {
         case ServiceError::IndexStale: return "indexes are stale; rebuild them";
         case ServiceError::InvalidRange: return "range upper bound is below lower bound";
         case ServiceError::InvalidKey: return "GPA must be finite";
-        case ServiceError::VerificationFailed: return "search result verification failed";
+        case ServiceError::UnexpectedIndexError: return "unexpected index error";
     }
     return "unknown search error";
 }
 
-std::optional<SearchStrategy> readSearchStrategy() {
+std::optional<ExactSearchStrategy> readSearchStrategy() {
     std::cout << "Algorithm: 1 - linear, 2 - tree";
     std::cout << ", 3 - binary";
     std::cout << "\n";
     const auto choice = readNumber<int>("> ");
     if (!choice) return std::nullopt;
-    if (*choice == 1) return SearchStrategy::Linear;
-    if (*choice == 2) return SearchStrategy::Tree;
-    if (*choice == 3) return SearchStrategy::Binary;
+    if (*choice == 1) return ExactSearchStrategy::Linear;
+    if (*choice == 2) return ExactSearchStrategy::Tree;
+    if (*choice == 3) return ExactSearchStrategy::Binary;
     std::cout << "Unknown algorithm\n";
     return std::nullopt;
 }
 
-std::optional<RangeStrategy> readRangeStrategy() {
+std::optional<RangeSearchStrategy> readRangeStrategy() {
     const auto choice = readNumber<int>("Algorithm: 1 - linear, 2 - binary\n> ");
     if (!choice) return std::nullopt;
-    if (*choice == 1) return RangeStrategy::Linear;
-    if (*choice == 2) return RangeStrategy::Binary;
+    if (*choice == 1) return RangeSearchStrategy::Linear;
+    if (*choice == 2) return RangeSearchStrategy::Binary;
     std::cout << "Unknown algorithm\n";
     return std::nullopt;
 }
@@ -104,7 +104,7 @@ void printStudent(const Student& student) {
               << ", birth year=" << student.birthYear << ", GPA=" << student.gpa << '\n';
 }
 
-void printResults(
+void printSearchResults(
     const StudentSearchService& service,
     const std::expected<DynamicArray<RecordId>, ServiceError>& result
 ) {
@@ -139,7 +139,7 @@ void addStudent(StudentSearchService& service) {
 }
 
 void generateStudents(StudentSearchService& service) {
-    const auto count = readSize("Record count (0-10000): ", maxGeneratedRecords);
+    const auto count = readBoundedSize("Record count (0-10000): ", maxGeneratedRecords);
     if (!count) return;
     const auto seed = readNumber<std::uint64_t>("Seed: ");
     if (!count || !seed) return;
@@ -178,7 +178,7 @@ void loadStudents(StudentSearchService& service) {
     auto loaded = StudentFileStorage::load(*path);
     if (!loaded) {
         std::cout << "Load failed (" << toString(loaded.error().code) << ")";
-        if (loaded.error().line != 0) std::cout << " at line " << loaded.error().line;
+        if (loaded.error().lineNumber != 0) std::cout << " at line " << loaded.error().lineNumber;
         std::cout << ": " << loaded.error().message << '\n';
         return;
     }
@@ -202,20 +202,20 @@ void saveStudents(const StudentSearchService& service) {
     std::cout << "Data saved.\n";
 }
 
-void showStatistics(const StudentSearchService& service) {
+void showIndexStatistics(const StudentSearchService& service) {
     const auto statistics = service.getIndexStatistics();
     if (!statistics) {
         std::cout << "Cannot show statistics: " << toString(statistics.error()) << "\n";
         return;
     }
-    std::cout << "Records=" << statistics->records
-              << ", last-name keys=" << statistics->lastNameKeys
-              << ", birth-year keys=" << statistics->birthYearKeys
-              << ", GPA keys=" << statistics->gpaKeys
-              << ", composite keys=" << statistics->compositeKeys << '\n';
+    std::cout << "Records=" << statistics->recordCount
+              << ", last-name keys=" << statistics->lastNameKeyCount
+              << ", birth-year keys=" << statistics->birthYearKeyCount
+              << ", GPA keys=" << statistics->gpaKeyCount
+              << ", composite keys=" << statistics->compositeKeyCount << '\n';
 }
 
-void exactSearch(const StudentSearchService& service) {
+void handleExactSearch(const StudentSearchService& service) {
     const auto attribute = readNumber<int>(
         "Attribute: 1 - ID, 2 - last name, 3 - birth year, 4 - GPA\n> "
     );
@@ -224,22 +224,22 @@ void exactSearch(const StudentSearchService& service) {
     if (!strategy) return;
     if (*attribute == 1) {
         const auto value = readNumber<RecordId>("ID: ");
-        if (value) printResults(service, service.findById(*value, *strategy));
+        if (value) printSearchResults(service, service.findById(*value, *strategy));
     } else if (*attribute == 2) {
         const auto value = readText("Last name: ");
-        if (value) printResults(service, service.findByLastName(*value, *strategy));
+        if (value) printSearchResults(service, service.findByLastName(*value, *strategy));
     } else if (*attribute == 3) {
         const auto value = readNumber<int>("Birth year: ");
-        if (value) printResults(service, service.findByBirthYear(*value, *strategy));
+        if (value) printSearchResults(service, service.findByBirthYear(*value, *strategy));
     } else if (*attribute == 4) {
         const auto value = readNumber<double>("GPA: ");
-        if (value) printResults(service, service.findByGpa(*value, *strategy));
+        if (value) printSearchResults(service, service.findByGpa(*value, *strategy));
     } else {
         std::cout << "Unknown attribute\n";
     }
 }
 
-void rangeSearchMenu(const StudentSearchService& service) {
+void handleRangeSearch(const StudentSearchService& service) {
     const auto attribute = readNumber<int>("Attribute: 1 - birth year, 2 - GPA\n> ");
     if (!attribute) return;
     const auto strategy = readRangeStrategy();
@@ -247,11 +247,11 @@ void rangeSearchMenu(const StudentSearchService& service) {
     if (*attribute == 1) {
         const auto lower = readNumber<int>("Lower year: ");
         const auto upper = readNumber<int>("Upper year: ");
-        if (lower && upper) printResults(service, service.findBirthYearRange(*lower, *upper, *strategy));
+        if (lower && upper) printSearchResults(service, service.findInBirthYearRange(*lower, *upper, *strategy));
     } else if (*attribute == 2) {
         const auto lower = readNumber<double>("Lower GPA: ");
         const auto upper = readNumber<double>("Upper GPA: ");
-        if (lower && upper) printResults(service, service.findGpaRange(*lower, *upper, *strategy));
+        if (lower && upper) printSearchResults(service, service.findInGpaRange(*lower, *upper, *strategy));
     } else {
         std::cout << "Unknown attribute\n";
     }
@@ -267,14 +267,14 @@ std::optional<StudentCompositeKey> readCompositeKey() {
     return StudentCompositeKey{*lastName, *firstName, *birthYear};
 }
 
-void compositeSearch(const StudentSearchService& service) {
+void handleCompositeSearch(const StudentSearchService& service) {
     const auto mode = readNumber<int>("Search: 1 - exact, 2 - range\n> ");
     if (!mode) return;
     if (*mode == 1) {
         const auto key = readCompositeKey();
         if (!key) return;
         const auto strategy = readSearchStrategy();
-        if (strategy) printResults(service, service.findByComposite(*key, *strategy));
+        if (strategy) printSearchResults(service, service.findByCompositeKey(*key, *strategy));
     } else if (*mode == 2) {
         std::cout << "Inclusive lexicographic range: last name, first name, birth year\n"
                   << "Lower key:\n";
@@ -284,16 +284,16 @@ void compositeSearch(const StudentSearchService& service) {
         const auto upper = readCompositeKey();
         if (!upper) return;
         const auto strategy = readRangeStrategy();
-        if (strategy) printResults(service, service.findCompositeRange(*lower, *upper, *strategy));
+        if (strategy) printSearchResults(service, service.findInCompositeKeyRange(*lower, *upper, *strategy));
     } else {
         std::cout << "Unknown search mode\n";
     }
 }
 
 void runBenchmark(DynamicArray<BenchmarkResult>& latestResults) {
-    const auto size = readSize("Dataset size (0-10000): ", BenchmarkRunner::maxDatasetSize);
+    const auto size = readBoundedSize("Dataset size (0-10000): ", BenchmarkRunner::maxDatasetSize);
     if (!size) return;
-    const auto queries = readSize("Query count (0-10000): ", BenchmarkRunner::maxQueryCount);
+    const auto queries = readBoundedSize("Query count (0-10000): ", BenchmarkRunner::maxQueryCount);
     if (!queries) return;
     const auto seed = readNumber<std::uint64_t>("Seed: ");
     if (!size || !queries || !seed) return;
@@ -363,10 +363,10 @@ int main() {
                 service.buildIndexes();
                 std::cout << "Indexes built.\n";
                 break;
-            case 7: showStatistics(service); break;
-            case 8: exactSearch(service); break;
-            case 9: rangeSearchMenu(service); break;
-            case 10: compositeSearch(service); break;
+            case 7: showIndexStatistics(service); break;
+            case 8: handleExactSearch(service); break;
+            case 9: handleRangeSearch(service); break;
+            case 10: handleCompositeSearch(service); break;
             case 11: runBenchmark(latestResults); break;
             case 12: exportBenchmark(latestResults); break;
             default: std::cout << "Unknown menu option\n"; break;

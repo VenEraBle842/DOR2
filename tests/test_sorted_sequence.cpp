@@ -21,7 +21,7 @@ TEST(ArraySortedSequenceTest, AddsAtEveryPositionAndKeepsDuplicates) {
 
 TEST(ArraySortedSequenceTest, EmptyAndBounds) {
     ArraySortedSequence<int> sequence;
-    EXPECT_TRUE(sequence.getIsEmpty());
+    EXPECT_TRUE(sequence.isEmpty());
     EXPECT_FALSE(sequence.getFirst().has_value());
     EXPECT_FALSE(sequence.getLast().has_value());
     EXPECT_FALSE(sequence.get(1).has_value());

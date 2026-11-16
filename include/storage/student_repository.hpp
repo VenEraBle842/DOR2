@@ -60,7 +60,7 @@ public:
     }
 
     std::size_t getCount() const noexcept { return students_.size(); }
-    bool getIsEmpty() const noexcept { return students_.empty(); }
+    bool isEmpty() const noexcept { return students_.empty(); }
     std::uint64_t getSnapshotId() const noexcept { return snapshotId_; }
 
     std::optional<Student> get(std::size_t position) const {

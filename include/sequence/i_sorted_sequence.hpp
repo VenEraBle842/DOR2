@@ -13,7 +13,7 @@ public:
     virtual ~ISortedSequence() = default;
 
     virtual std::size_t getLength() const noexcept = 0;
-    virtual bool getIsEmpty() const noexcept = 0;
+    virtual bool isEmpty() const noexcept = 0;
     virtual std::optional<T> get(std::size_t index) const = 0;
     virtual const T& at(std::size_t index) const = 0;
     virtual std::optional<T> getFirst() const = 0;

@@ -11,15 +11,15 @@
 #include <functional>
 #include <string>
 
-enum class SearchStrategy { Linear, Tree, Binary };
-enum class RangeStrategy { Linear, Binary };
+enum class ExactSearchStrategy { Linear, Tree, Binary };
+enum class RangeSearchStrategy { Linear, Binary };
 
 enum class ServiceError {
     IndexNotBuilt,
     IndexStale,
     InvalidRange,
     InvalidKey,
-    VerificationFailed
+    UnexpectedIndexError
 };
 
 class StudentSearchService {
@@ -34,11 +34,11 @@ private:
             case IndexError::InvalidKey: return ServiceError::InvalidKey;
             case IndexError::InvalidRange: return ServiceError::InvalidRange;
         }
-        return ServiceError::VerificationFailed;
+        return ServiceError::UnexpectedIndexError;
     }
 
     template <typename Predicate>
-    DynamicArray<RecordId> linearExact(Predicate predicate) const {
+    DynamicArray<RecordId> findExactLinear(Predicate predicate) const {
         DynamicArray<RecordId> result;
         for (std::size_t position = 0; position < repository_.getCount(); ++position) {
             const Student& student = repository_.at(position);
@@ -49,7 +49,7 @@ private:
     }
 
     template <typename Key, typename Extractor, typename Compare = std::less<Key>>
-    std::expected<DynamicArray<RecordId>, ServiceError> linearRange(
+    std::expected<DynamicArray<RecordId>, ServiceError> findRangeLinear(
         const Key& lower,
         const Key& upper,
         Extractor extractor,
@@ -97,15 +97,15 @@ public:
 
     std::expected<DynamicArray<RecordId>, ServiceError> findById(
         RecordId id,
-        SearchStrategy strategy
+        ExactSearchStrategy strategy
     ) const {
-        if (strategy == SearchStrategy::Linear) {
-            return linearExact([id](const Student& student) { return student.id == id; });
+        if (strategy == ExactSearchStrategy::Linear) {
+            return findExactLinear([id](const Student& student) { return student.id == id; });
         }
-        if (strategy == SearchStrategy::Binary) {
-            return mapIndexResult(indexes_.findIdBinary(repository_, id));
+        if (strategy == ExactSearchStrategy::Binary) {
+            return mapIndexResult(indexes_.findByIdBinary(repository_, id));
         }
-        const auto result = indexes_.findId(repository_, id);
+        const auto result = indexes_.findPositionByIdTree(repository_, id);
         if (!result) return std::unexpected(mapIndexError(result.error()));
         DynamicArray<RecordId> ids;
         if (result->has_value()) ids.push_back(id);
@@ -114,92 +114,92 @@ public:
 
     std::expected<DynamicArray<RecordId>, ServiceError> findByLastName(
         const std::string& key,
-        SearchStrategy strategy
+        ExactSearchStrategy strategy
     ) const {
-        if (strategy == SearchStrategy::Linear) {
-            return linearExact([&key](const Student& student) { return student.lastName == key; });
+        if (strategy == ExactSearchStrategy::Linear) {
+            return findExactLinear([&key](const Student& student) { return student.lastName == key; });
         }
-        return strategy == SearchStrategy::Tree
-            ? mapIndexResult(indexes_.findLastNameTree(repository_, key))
-            : mapIndexResult(indexes_.findLastNameBinary(repository_, key));
+        return strategy == ExactSearchStrategy::Tree
+            ? mapIndexResult(indexes_.findByLastNameTree(repository_, key))
+            : mapIndexResult(indexes_.findByLastNameBinary(repository_, key));
     }
 
     std::expected<DynamicArray<RecordId>, ServiceError> findByBirthYear(
         int key,
-        SearchStrategy strategy
+        ExactSearchStrategy strategy
     ) const {
-        if (strategy == SearchStrategy::Linear) {
-            return linearExact([key](const Student& student) { return student.birthYear == key; });
+        if (strategy == ExactSearchStrategy::Linear) {
+            return findExactLinear([key](const Student& student) { return student.birthYear == key; });
         }
-        return strategy == SearchStrategy::Tree
-            ? mapIndexResult(indexes_.findBirthYearTree(repository_, key))
-            : mapIndexResult(indexes_.findBirthYearBinary(repository_, key));
+        return strategy == ExactSearchStrategy::Tree
+            ? mapIndexResult(indexes_.findByBirthYearTree(repository_, key))
+            : mapIndexResult(indexes_.findByBirthYearBinary(repository_, key));
     }
 
     std::expected<DynamicArray<RecordId>, ServiceError> findByGpa(
         double key,
-        SearchStrategy strategy
+        ExactSearchStrategy strategy
     ) const {
         if (!std::isfinite(key)) return std::unexpected(ServiceError::InvalidKey);
-        if (strategy == SearchStrategy::Linear) {
-            return linearExact([key](const Student& student) { return student.gpa == key; });
+        if (strategy == ExactSearchStrategy::Linear) {
+            return findExactLinear([key](const Student& student) { return student.gpa == key; });
         }
-        return strategy == SearchStrategy::Tree
-            ? mapIndexResult(indexes_.findGpaTree(repository_, key))
-            : mapIndexResult(indexes_.findGpaBinary(repository_, key));
+        return strategy == ExactSearchStrategy::Tree
+            ? mapIndexResult(indexes_.findByGpaTree(repository_, key))
+            : mapIndexResult(indexes_.findByGpaBinary(repository_, key));
     }
 
-    std::expected<DynamicArray<RecordId>, ServiceError> findByComposite(
+    std::expected<DynamicArray<RecordId>, ServiceError> findByCompositeKey(
         const StudentCompositeKey& key,
-        SearchStrategy strategy
+        ExactSearchStrategy strategy
     ) const {
-        if (strategy == SearchStrategy::Linear) {
-            return linearExact([&key](const Student& student) {
+        if (strategy == ExactSearchStrategy::Linear) {
+            return findExactLinear([&key](const Student& student) {
                 return student.lastName == key.lastName && student.firstName == key.firstName &&
                        student.birthYear == key.birthYear;
             });
         }
-        return strategy == SearchStrategy::Tree
-            ? mapIndexResult(indexes_.findCompositeTree(repository_, key))
-            : mapIndexResult(indexes_.findCompositeBinary(repository_, key));
+        return strategy == ExactSearchStrategy::Tree
+            ? mapIndexResult(indexes_.findByCompositeKeyTree(repository_, key))
+            : mapIndexResult(indexes_.findByCompositeKeyBinary(repository_, key));
     }
 
-    std::expected<DynamicArray<RecordId>, ServiceError> findBirthYearRange(
+    std::expected<DynamicArray<RecordId>, ServiceError> findInBirthYearRange(
         int lower,
         int upper,
-        RangeStrategy strategy
+        RangeSearchStrategy strategy
     ) const {
-        if (strategy == RangeStrategy::Linear) {
-            return linearRange<int>(lower, upper, [](const Student& student) {
+        if (strategy == RangeSearchStrategy::Linear) {
+            return findRangeLinear<int>(lower, upper, [](const Student& student) {
                 return student.birthYear;
             });
         }
-        return mapIndexResult(indexes_.findBirthYearRange(repository_, lower, upper));
+        return mapIndexResult(indexes_.findInBirthYearRangeBinary(repository_, lower, upper));
     }
 
-    std::expected<DynamicArray<RecordId>, ServiceError> findGpaRange(
+    std::expected<DynamicArray<RecordId>, ServiceError> findInGpaRange(
         double lower,
         double upper,
-        RangeStrategy strategy
+        RangeSearchStrategy strategy
     ) const {
         if (!std::isfinite(lower) || !std::isfinite(upper)) {
             return std::unexpected(ServiceError::InvalidKey);
         }
-        if (strategy == RangeStrategy::Linear) {
-            return linearRange<double>(lower, upper, [](const Student& student) {
+        if (strategy == RangeSearchStrategy::Linear) {
+            return findRangeLinear<double>(lower, upper, [](const Student& student) {
                 return student.gpa;
             });
         }
-        return mapIndexResult(indexes_.findGpaRange(repository_, lower, upper));
+        return mapIndexResult(indexes_.findInGpaRangeBinary(repository_, lower, upper));
     }
 
-    std::expected<DynamicArray<RecordId>, ServiceError> findCompositeRange(
+    std::expected<DynamicArray<RecordId>, ServiceError> findInCompositeKeyRange(
         const StudentCompositeKey& lower,
         const StudentCompositeKey& upper,
-        RangeStrategy strategy
+        RangeSearchStrategy strategy
     ) const {
-        if (strategy == RangeStrategy::Linear) {
-            return linearRange<StudentCompositeKey>(
+        if (strategy == RangeSearchStrategy::Linear) {
+            return findRangeLinear<StudentCompositeKey>(
                 lower,
                 upper,
                 [](const Student& student) {
@@ -208,6 +208,6 @@ public:
                 StudentCompositeKeyCompare{}
             );
         }
-        return mapIndexResult(indexes_.findCompositeRange(repository_, lower, upper));
+        return mapIndexResult(indexes_.findInCompositeKeyRangeBinary(repository_, lower, upper));
     }
 };
