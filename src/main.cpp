@@ -1,62 +1,35 @@
-#include "benchmark/benchmark_runner.hpp"
+#include "application/student_application.hpp"
+#include "common/number_input.hpp"
 #include "service/student_search_service.hpp"
-#include "storage/student_file_storage.hpp"
 
-#include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <expected>
 #include <iostream>
-#include <locale>
 #include <optional>
-#include <random>
-#include <sstream>
 #include <string>
-#include <type_traits>
-#include <utility>
 
-constexpr std::size_t maxGeneratedRecords = 10'000;
+void printError(const AppError& error) {
+    std::cout << formatError(error) << '\n';
+}
 
 template <typename T>
 std::optional<T> readNumber(const std::string& prompt) {
     std::cout << prompt;
     std::string line;
     if (!std::getline(std::cin, line)) return std::nullopt;
-    std::istringstream input(line);
-    input.imbue(std::locale::classic());
-    input >> std::ws;
-    if constexpr (std::is_unsigned_v<T>) {
-        if (input.peek() == '-') {
-            std::cout << "Value must not be negative\n";
-            return std::nullopt;
-        }
-    }
-    T value{};
-    if (!(input >> value)) {
-        std::cout << "Invalid value.\n";
-        return std::nullopt;
-    }
-    input >> std::ws;
-    if (input.peek() != std::char_traits<char>::eof()) {
-        std::cout << "Unexpected characters after value\n";
-        return std::nullopt;
-    }
-    if constexpr (std::is_floating_point_v<T>) {
-        if (!std::isfinite(value)) {
-            std::cout << "Value must be finite\n";
-            return std::nullopt;
-        }
-    }
-    return value;
+    const auto value = parseNumber<T>(line, prompt);
+    if (!value) { printError(value.error()); return std::nullopt; }
+    return *value;
 }
 
 std::optional<std::size_t> readBoundedSize(const std::string& prompt, std::size_t maximum) {
-    const auto value = readNumber<std::size_t>(prompt);
-    if (value && *value > maximum) {
-        std::cout << "Value must not exceed " << maximum << ".\n";
-        return std::nullopt;
-    }
-    return value;
+    std::cout << prompt;
+    std::string line;
+    if (!std::getline(std::cin, line)) return std::nullopt;
+    const auto value = parseBoundedSize(line, prompt, maximum);
+    if (!value) { printError(value.error()); return std::nullopt; }
+    return *value;
 }
 
 std::optional<std::string> readText(const std::string& prompt) {
@@ -64,17 +37,6 @@ std::optional<std::string> readText(const std::string& prompt) {
     std::string value;
     if (!std::getline(std::cin, value)) return std::nullopt;
     return value;
-}
-
-std::string serviceErrorMessage(ServiceError error) {
-    switch (error) {
-        case ServiceError::IndexNotBuilt: return "indexes are not built";
-        case ServiceError::IndexStale: return "indexes are stale; rebuild them";
-        case ServiceError::InvalidRange: return "range upper bound is below lower bound";
-        case ServiceError::InvalidKey: return "GPA must be finite";
-        case ServiceError::UnexpectedIndexError: return "unexpected index error";
-    }
-    return "unknown search error";
 }
 
 std::optional<ExactSearchStrategy> readSearchStrategy() {
@@ -86,7 +48,7 @@ std::optional<ExactSearchStrategy> readSearchStrategy() {
     if (*choice == 1) return ExactSearchStrategy::Linear;
     if (*choice == 2) return ExactSearchStrategy::Tree;
     if (*choice == 3) return ExactSearchStrategy::Binary;
-    std::cout << "Unknown algorithm\n";
+    printError(makeError(AppErrorCode::UnknownSelection, {.field = "Algorithm"}));
     return std::nullopt;
 }
 
@@ -95,7 +57,7 @@ std::optional<RangeSearchStrategy> readRangeStrategy() {
     if (!choice) return std::nullopt;
     if (*choice == 1) return RangeSearchStrategy::Linear;
     if (*choice == 2) return RangeSearchStrategy::Binary;
-    std::cout << "Unknown algorithm\n";
+    printError(makeError(AppErrorCode::UnknownSelection, {.field = "Algorithm"}));
     return std::nullopt;
 }
 
@@ -106,10 +68,10 @@ void printStudent(const Student& student) {
 
 void printSearchResults(
     const StudentSearchService& service,
-    const std::expected<DynamicArray<RecordId>, ServiceError>& result
+    const std::expected<DynamicArray<RecordId>, AppError>& result
 ) {
     if (!result) {
-        std::cout << "Search failed: " << serviceErrorMessage(result.error()) << "\n";
+        printError(result.error());
         return;
     }
     std::cout << "Matches: " << result->size() << '\n';
@@ -119,48 +81,28 @@ void printSearchResults(
     }
 }
 
-void addStudent(StudentSearchService& service) {
+void addStudent(StudentApplication& app) {
     const auto id = readNumber<std::uint64_t>("ID: ");
     const auto firstName = readText("First name: ");
     const auto lastName = readText("Last name: ");
     const auto birthYear = readNumber<int>("Birth year: ");
     const auto gpa = readNumber<double>("GPA: ");
     if (!id || !firstName || !lastName || !birthYear || !gpa) return;
-    if (!std::isfinite(*gpa)) {
-        std::cout << "GPA must be finite\n";
-        return;
-    }
-    const auto added = service.addStudent(Student{*id, *firstName, *lastName, *birthYear, *gpa});
+    const auto added = app.addStudent(Student{*id, *firstName, *lastName, *birthYear, *gpa});
     if (!added) {
-        std::cout << "Add failed: " << toString(added.error()) << '\n';
+        printError(added.error());
         return;
     }
     std::cout << "Student added; indexes are now stale\n";
 }
 
-void generateStudents(StudentSearchService& service) {
-    const auto count = readBoundedSize("Record count (0-10000): ", maxGeneratedRecords);
+void generateStudents(StudentApplication& app) {
+    const auto count = readBoundedSize("Record count (0-10000): ", StudentApplication::maxGeneratedRecords);
     if (!count) return;
     const auto seed = readNumber<std::uint64_t>("Seed: ");
-    if (!count || !seed) return;
-    DynamicArray<Student> students;
-    std::mt19937_64 generator(*seed);
-    for (std::size_t index = 0; index < *count; ++index) {
-        const int year = 1998 + static_cast<int>(generator() % 10U);
-        const double gpa = 3.0 + static_cast<double>(generator() % 21U) / 10.0;
-        students.push_back(Student{
-            1000U + index,
-            "First" + std::to_string(generator() % 23U),
-            "Last" + std::to_string(generator() % 17U),
-            year,
-            gpa
-        });
-    }
-    const auto replaced = service.replaceStudents(std::move(students));
-    if (!replaced) {
-        std::cout << "Generation failed: " << toString(replaced.error()) << '\n';
-        return;
-    }
+    if (!seed) return;
+    const auto result = app.generateStudents(*count, *seed);
+    if (!result) { printError(result.error()); return; }
     std::cout << "Generated " << *count << " records. Build indexes before indexed search\n";
 }
 
@@ -172,40 +114,27 @@ void showStudents(const StudentSearchService& service) {
     }
 }
 
-void loadStudents(StudentSearchService& service) {
+void loadStudents(StudentApplication& app) {
     const auto path = readText("Input file: ");
     if (!path) return;
-    auto loaded = StudentFileStorage::load(*path);
-    if (!loaded) {
-        std::cout << "Load failed (" << toString(loaded.error().code) << ")";
-        if (loaded.error().lineNumber != 0) std::cout << " at line " << loaded.error().lineNumber;
-        std::cout << ": " << loaded.error().message << '\n';
-        return;
-    }
-    const auto replaced = service.replaceStudents(std::move(loaded.value()));
-    if (!replaced) {
-        std::cout << "Load failed: " << toString(replaced.error()) << '\n';
-        return;
-    }
-    service.buildIndexes();
-    std::cout << "Loaded " << service.getRepository().getCount() << " records and rebuilt indexes\n";
+    const auto loaded = app.loadStudents(*path);
+    if (!loaded) { printError(loaded.error()); return; }
+    std::cout << "Loaded " << app.getSearchService().getRepository().getCount()
+              << " records and rebuilt indexes\n";
 }
 
-void saveStudents(const StudentSearchService& service) {
+void saveStudents(const StudentApplication& app) {
     const auto path = readText("Output file: ");
     if (!path) return;
-    const auto saved = StudentFileStorage::save(*path, service.getRepository());
-    if (!saved) {
-        std::cout << "Save failed: " << saved.error().message << '\n';
-        return;
-    }
+    const auto saved = app.saveStudents(*path);
+    if (!saved) { printError(saved.error()); return; }
     std::cout << "Data saved.\n";
 }
 
 void showIndexStatistics(const StudentSearchService& service) {
     const auto statistics = service.getIndexStatistics();
     if (!statistics) {
-        std::cout << "Cannot show statistics: " << toString(statistics.error()) << "\n";
+        printError(makeError(statistics.error()));
         return;
     }
     std::cout << "Records=" << statistics->recordCount
@@ -215,94 +144,98 @@ void showIndexStatistics(const StudentSearchService& service) {
               << ", composite keys=" << statistics->compositeKeyCount << '\n';
 }
 
-void handleExactSearch(const StudentSearchService& service) {
-    const auto attribute = readNumber<int>(
-        "Attribute: 1 - ID, 2 - last name, 3 - birth year, 4 - GPA\n> "
-    );
+void handleExactSearch(const StudentApplication& app) {
+    const auto attribute = readNumber<int>("Attribute: 1 - ID, 2 - last name, 3 - birth year, 4 - GPA\n> ");
     if (!attribute) return;
     const auto strategy = readSearchStrategy();
     if (!strategy) return;
-    if (*attribute == 1) {
-        const auto value = readNumber<RecordId>("ID: ");
-        if (value) printSearchResults(service, service.findById(*value, *strategy));
-    } else if (*attribute == 2) {
-        const auto value = readText("Last name: ");
-        if (value) printSearchResults(service, service.findByLastName(*value, *strategy));
-    } else if (*attribute == 3) {
-        const auto value = readNumber<int>("Birth year: ");
-        if (value) printSearchResults(service, service.findByBirthYear(*value, *strategy));
-    } else if (*attribute == 4) {
-        const auto value = readNumber<double>("GPA: ");
-        if (value) printSearchResults(service, service.findByGpa(*value, *strategy));
-    } else {
-        std::cout << "Unknown attribute\n";
+    if (*attribute < 1 || *attribute > 4) {
+        printError(makeError(AppErrorCode::UnknownSelection, {.field = "Attribute"}));
+        return;
     }
+    const auto value = readText("Value: ");
+    if (!value) return;
+    SearchRequest request;
+    request.attribute = static_cast<SearchAttribute>(*attribute - 1);
+    request.exactStrategy = *strategy;
+    request.lower.value = *value;
+    printSearchResults(app.getSearchService(), app.search(request));
 }
 
-void handleRangeSearch(const StudentSearchService& service) {
+void handleRangeSearch(const StudentApplication& app) {
     const auto attribute = readNumber<int>("Attribute: 1 - birth year, 2 - GPA\n> ");
     if (!attribute) return;
     const auto strategy = readRangeStrategy();
     if (!strategy) return;
-    if (*attribute == 1) {
-        const auto lower = readNumber<int>("Lower year: ");
-        const auto upper = readNumber<int>("Upper year: ");
-        if (lower && upper) printSearchResults(service, service.findInBirthYearRange(*lower, *upper, *strategy));
-    } else if (*attribute == 2) {
-        const auto lower = readNumber<double>("Lower GPA: ");
-        const auto upper = readNumber<double>("Upper GPA: ");
-        if (lower && upper) printSearchResults(service, service.findInGpaRange(*lower, *upper, *strategy));
-    } else {
-        std::cout << "Unknown attribute\n";
+    if (*attribute != 1 && *attribute != 2) {
+        printError(makeError(AppErrorCode::UnknownSelection, {.field = "Attribute"}));
+        return;
     }
+    const auto lower = readText("Lower bound: ");
+    const auto upper = readText("Upper bound: ");
+    if (!lower || !upper) return;
+    SearchRequest request;
+    request.attribute = *attribute == 1 ? SearchAttribute::BirthYear : SearchAttribute::Gpa;
+    request.range = true;
+    request.rangeStrategy = *strategy;
+    request.lower.value = *lower;
+    request.upper.value = *upper;
+    printSearchResults(app.getSearchService(), app.search(request));
 }
 
-std::optional<StudentCompositeKey> readCompositeKey() {
+std::optional<SearchKeyInput> readCompositeKey() {
     const auto lastName = readText("Last name: ");
     if (!lastName) return std::nullopt;
     const auto firstName = readText("First name: ");
     if (!firstName) return std::nullopt;
-    const auto birthYear = readNumber<int>("Birth year: ");
+    const auto birthYear = readText("Birth year: ");
     if (!birthYear) return std::nullopt;
-    return StudentCompositeKey{*lastName, *firstName, *birthYear};
+    return SearchKeyInput{*lastName, *firstName, *birthYear};
 }
 
-void handleCompositeSearch(const StudentSearchService& service) {
+void handleCompositeSearch(const StudentApplication& app) {
     const auto mode = readNumber<int>("Search: 1 - exact, 2 - range\n> ");
     if (!mode) return;
-    if (*mode == 1) {
-        const auto key = readCompositeKey();
-        if (!key) return;
-        const auto strategy = readSearchStrategy();
-        if (strategy) printSearchResults(service, service.findByCompositeKey(*key, *strategy));
-    } else if (*mode == 2) {
-        std::cout << "Inclusive lexicographic range: last name, first name, birth year\n"
-                  << "Lower key:\n";
-        const auto lower = readCompositeKey();
-        if (!lower) return;
+    if (*mode != 1 && *mode != 2) {
+        printError(makeError(AppErrorCode::UnknownSelection, {.field = "Search mode"}));
+        return;
+    }
+    SearchRequest request;
+    request.attribute = SearchAttribute::CompositeKey;
+    request.range = *mode == 2;
+    if (request.range) std::cout << "Inclusive lexicographic range: last name, first name, birth year\nLower key:\n";
+    const auto lower = readCompositeKey();
+    if (!lower) return;
+    request.lower = *lower;
+    if (request.range) {
         std::cout << "Upper key:\n";
         const auto upper = readCompositeKey();
         if (!upper) return;
+        request.upper = *upper;
         const auto strategy = readRangeStrategy();
-        if (strategy) printSearchResults(service, service.findInCompositeKeyRange(*lower, *upper, *strategy));
+        if (!strategy) return;
+        request.rangeStrategy = *strategy;
     } else {
-        std::cout << "Unknown search mode\n";
+        const auto strategy = readSearchStrategy();
+        if (!strategy) return;
+        request.exactStrategy = *strategy;
     }
+    printSearchResults(app.getSearchService(), app.search(request));
 }
 
-void runBenchmark(DynamicArray<BenchmarkResult>& latestResults) {
+void runBenchmark(StudentApplication& app) {
     const auto size = readBoundedSize("Dataset size (0-10000): ", BenchmarkRunner::maxDatasetSize);
     if (!size) return;
     const auto queries = readBoundedSize("Query count (0-10000): ", BenchmarkRunner::maxQueryCount);
     if (!queries) return;
     const auto seed = readNumber<std::uint64_t>("Seed: ");
     if (!size || !queries || !seed) return;
-    auto results = BenchmarkRunner::run(*size, *queries, *seed);
+    auto results = app.runBenchmark(*size, *queries, *seed);
     if (!results) {
-        std::cout << "Benchmark failed: " << results.error().message << '\n';
+        printError(results.error());
         return;
     }
-    latestResults = std::move(*results);
+    const auto& latestResults = app.getLatestResults();
     std::cout << "Benchmark rows: " << latestResults.size() << '\n';
     for (const BenchmarkResult& result : latestResults) {
         std::cout << result.inputOrder << " | " << result.algorithm << " | " << result.operation
@@ -311,19 +244,16 @@ void runBenchmark(DynamicArray<BenchmarkResult>& latestResults) {
     }
 }
 
-void exportBenchmark(const DynamicArray<BenchmarkResult>& latestResults) {
-    if (latestResults.empty()) {
-        std::cout << "Run a comparison first.\n";
+void exportBenchmark(const StudentApplication& app) {
+    if (app.getLatestResults().empty()) {
+        printError(makeError(AppErrorCode::NoBenchmarkResults));
         return;
     }
     const auto path = readText("CSV output file: ");
     if (!path) return;
-    const auto saved = BenchmarkRunner::saveCsv(*path, latestResults);
-    if (saved) {
-        std::cout << "CSV saved\n";
-    } else {
-        std::cout << "CSV save failed: " << saved.error().message << '\n';
-    }
+    const auto saved = app.exportBenchmark(*path);
+    if (!saved) { printError(saved.error()); return; }
+    std::cout << "CSV saved\n";
 }
 
 void printMenu() {
@@ -343,8 +273,8 @@ void printMenu() {
               << " 0. Exit\n";
 }
 int main() {
-    StudentSearchService service;
-    DynamicArray<BenchmarkResult> latestResults;
+    StudentApplication app;
+    const auto& service = app.getSearchService();
     while (std::cin) {
         printMenu();
         const auto choice = readNumber<int>("> ");
@@ -353,23 +283,29 @@ int main() {
             continue;
         }
         if (*choice == 0) break;
-        switch (*choice) {
-            case 1: addStudent(service); break;
-            case 2: generateStudents(service); break;
-            case 3: showStudents(service); break;
-            case 4: loadStudents(service); break;
-            case 5: saveStudents(service); break;
-            case 6:
-                service.buildIndexes();
-                std::cout << "Indexes built.\n";
-                break;
-            case 7: showIndexStatistics(service); break;
-            case 8: handleExactSearch(service); break;
-            case 9: handleRangeSearch(service); break;
-            case 10: handleCompositeSearch(service); break;
-            case 11: runBenchmark(latestResults); break;
-            case 12: exportBenchmark(latestResults); break;
-            default: std::cout << "Unknown menu option\n"; break;
+        try {
+            switch (*choice) {
+                case 1: addStudent(app); break;
+                case 2: generateStudents(app); break;
+                case 3: showStudents(service); break;
+                case 4: loadStudents(app); break;
+                case 5: saveStudents(app); break;
+                case 6:
+                    if (const auto built = app.buildIndexes(); !built) printError(built.error());
+                    else std::cout << "Indexes built.\n";
+                    break;
+                case 7: showIndexStatistics(service); break;
+                case 8: handleExactSearch(app); break;
+                case 9: handleRangeSearch(app); break;
+                case 10: handleCompositeSearch(app); break;
+                case 11: runBenchmark(app); break;
+                case 12: exportBenchmark(app); break;
+                default: printError(makeError(AppErrorCode::UnknownSelection, {.field = "Menu"})); break;
+            }
+        } catch (const std::exception& error) {
+            printError(makeError(AppErrorCode::Unexpected, {.detail = error.what()}));
+        } catch (...) {
+            printError(makeError(AppErrorCode::Unexpected));
         }
     }
     std::cout << "Program finished\n";

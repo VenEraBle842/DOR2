@@ -22,13 +22,16 @@ struct BenchmarkResult {
     bool verified{false};
 };
 
-enum class BenchmarkError { InvalidWorkload, PreparationFailed, FileOperationFailed };
-
 struct BenchmarkFailure {
     BenchmarkError code;
     std::string message;
     std::optional<FileFailure> fileFailure;
 };
+
+inline AppError makeError(const BenchmarkFailure& failure) {
+    if (failure.fileFailure) return makeError(*failure.fileFailure);
+    return makeError(failure.code, {.detail = failure.message});
+}
 
 class BenchmarkRunner {
 public:

@@ -4,9 +4,9 @@
 #include <iostream>
 
 int main() {
-    const auto result = BenchmarkRunner::runAndSave("benchmark_results.csv", 1000, 200, 42);
+    const auto result = BenchmarkRunner::runAndSave("benchmark_results.csv", 1000, 200, 100);
     if (!result) {
-        std::cerr << "Benchmark failed: " << result.error().message << '\n';
+        std::cerr << formatError(makeError(result.error())) << '\n';
         return EXIT_FAILURE;
     }
     for (const BenchmarkResult& row : *result) {

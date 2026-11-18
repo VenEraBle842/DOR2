@@ -14,14 +14,6 @@
 enum class ExactSearchStrategy { Linear, Tree, Binary };
 enum class RangeSearchStrategy { Linear, Binary };
 
-enum class ServiceError {
-    IndexNotBuilt,
-    IndexStale,
-    InvalidRange,
-    InvalidKey,
-    UnexpectedIndexError
-};
-
 class StudentSearchService {
 private:
     StudentRepository repository_;

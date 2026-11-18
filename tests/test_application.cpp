@@ -1,0 +1,195 @@
+#include <gtest/gtest.h>
+
+#include "application/student_application.hpp"
+#include "common/number_input.hpp"
+
+#include <chrono>
+#include <fstream>
+#include <limits>
+
+class ApplicationTest : public testing::Test {
+protected:
+    StudentApplication app_;
+    std::filesystem::path directory_ = std::filesystem::temp_directory_path() /
+        ("dor2-app-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
+
+    void SetUp() override { std::filesystem::create_directory(directory_); }
+    void TearDown() override {
+        std::error_code ignored;
+        std::filesystem::remove_all(directory_, ignored);
+    }
+
+    void populate() {
+        ASSERT_TRUE(app_.addStudent({8, "Anna", "Smith", 2003, 4.5}));
+        ASSERT_TRUE(app_.addStudent({2, "Anna", "Smith", 2003, 4.5}));
+        ASSERT_TRUE(app_.addStudent({5, "Ivan", "Smith", 2001, 4.8}));
+        ASSERT_TRUE(app_.addStudent({1, "Иван", "Иванов", 2004, 4.1}));
+    }
+};
+
+TEST(NumberInputTest, RejectsInvalidAndOutOfRangeValuesWithoutThrowing) {
+    EXPECT_EQ(parseNumber<std::uint64_t>("-1", "ID").error().code, AppErrorCode::NegativeNumber);
+    EXPECT_FALSE(parseNumber<std::uint64_t>("18446744073709551616", "ID"));
+    EXPECT_FALSE(parseNumber<int>("2003x", "Year"));
+    EXPECT_FALSE(parseNumber<double>("4,5", "GPA"));
+    EXPECT_FALSE(parseNumber<double>("nan", "GPA"));
+    EXPECT_FALSE(parseNumber<double>("inf", "GPA"));
+    EXPECT_FALSE(parseNumber<int>("", "Year"));
+    EXPECT_EQ(parseBoundedSize("10001", "Count", 10000).error().code, AppErrorCode::LimitExceeded);
+    EXPECT_EQ(*parseNumber<std::uint64_t>("18446744073709551615", "ID"), std::numeric_limits<std::uint64_t>::max());
+    EXPECT_DOUBLE_EQ(*parseNumber<double>(" 4.125 ", "GPA"), 4.125);
+}
+
+TEST(ErrorCatalogTest, EveryCodeHasANameMessageAndRecoveryHint) {
+    for (std::size_t i = 0; i < static_cast<std::size_t>(AppErrorCode::Count); ++i) {
+        const auto& entry = describeError(static_cast<AppErrorCode>(i));
+        EXPECT_FALSE(entry.name.empty());
+        EXPECT_FALSE(entry.message.empty());
+        EXPECT_FALSE(entry.hint.empty());
+    }
+    const FileFailure failure{FileError::InvalidRecord, "broken GPA", "students.txt", 7};
+    const auto formatted = formatError(makeError(failure));
+    EXPECT_NE(formatted.find("students.txt"), std::string::npos);
+    EXPECT_NE(formatted.find("Line: 7"), std::string::npos);
+    EXPECT_NE(formatted.find("broken GPA"), std::string::npos);
+    EXPECT_EQ(makeError(RepositoryError::DuplicateId).code, makeError(FileError::DuplicateId).code);
+    EXPECT_EQ(makeError(IndexError::Stale).code, makeError(ServiceError::IndexStale).code);
+}
+
+TEST_F(ApplicationTest, DuplicateAndInvalidGpaUseCommonErrorsWithoutChangingRecords) {
+    populate();
+    EXPECT_EQ(app_.addStudent({8, "Other", "Name", 2000, 3.0}).error().code, AppErrorCode::DuplicateId);
+    EXPECT_EQ(app_.addStudent({9, "Other", "Name", 2000, std::numeric_limits<double>::infinity()}).error().code,
+              AppErrorCode::NonFiniteNumber);
+    EXPECT_EQ(app_.getSearchService().getRepository().getCount(), 4U);
+}
+
+TEST_F(ApplicationTest, GenerationIsReproducibleBoundedAndSupportsEmptyData) {
+    ASSERT_TRUE(app_.generateStudents(25, 123));
+    StudentApplication second;
+    ASSERT_TRUE(second.generateStudents(25, 123));
+    for (std::size_t i = 0; i < 25; ++i) {
+        EXPECT_EQ(app_.getSearchService().getRepository().at(i), second.getSearchService().getRepository().at(i));
+    }
+    EXPECT_EQ(app_.generateStudents(10001, 1).error().code, AppErrorCode::LimitExceeded);
+    EXPECT_EQ(app_.getSearchService().getRepository().getCount(), 25U);
+    ASSERT_TRUE(app_.generateStudents(0, 123));
+    EXPECT_TRUE(app_.getSearchService().getRepository().isEmpty());
+}
+
+TEST_F(ApplicationTest, ExactRequestsAgreeForEveryAttributeAndStrategy) {
+    populate();
+    ASSERT_TRUE(app_.buildIndexes());
+    const SearchKeyInput keys[] = {{"8", {}, {}}, {"Smith", {}, {}}, {"2003", {}, {}},
+                                    {"4.5", {}, {}}, {"Smith", "Anna", "2003"}};
+    const std::size_t counts[] = {1, 3, 2, 2, 2};
+    for (int attribute = 0; attribute < 5; ++attribute) {
+        SearchRequest request;
+        request.attribute = static_cast<SearchAttribute>(attribute);
+        request.lower = keys[attribute];
+        const auto reference = app_.search(request);
+        ASSERT_TRUE(reference);
+        ASSERT_EQ(reference->size(), counts[attribute]);
+        for (auto strategy : {ExactSearchStrategy::Tree, ExactSearchStrategy::Binary}) {
+            request.exactStrategy = strategy;
+            const auto actual = app_.search(request);
+            ASSERT_TRUE(actual);
+            ASSERT_EQ(actual->size(), reference->size());
+            for (std::size_t i = 0; i < reference->size(); ++i) EXPECT_EQ((*actual)[i], (*reference)[i]);
+        }
+    }
+}
+
+TEST_F(ApplicationTest, RangeRequestsIncludeBoundsAndKeepKeyThenIdOrder) {
+    populate();
+    ASSERT_TRUE(app_.buildIndexes());
+    SearchRequest request;
+    request.range = true;
+    request.attribute = SearchAttribute::CompositeKey;
+    request.lower = {"Smith", "Anna", "2003"};
+    request.upper = {"Smith", "Ivan", "2001"};
+    for (const auto strategy : {RangeSearchStrategy::Linear, RangeSearchStrategy::Binary}) {
+        request.rangeStrategy = strategy;
+        const auto result = app_.search(request);
+        ASSERT_TRUE(result);
+        ASSERT_EQ(result->size(), 3U);
+        EXPECT_EQ((*result)[0], 2U);
+        EXPECT_EQ((*result)[1], 8U);
+        EXPECT_EQ((*result)[2], 5U);
+    }
+    request.attribute = SearchAttribute::Gpa;
+    request.lower.value = "4.1";
+    request.upper.value = "4.5";
+    ASSERT_EQ(app_.search(request)->size(), 3U);
+    request.attribute = SearchAttribute::BirthYear;
+    request.lower.value = "2003";
+    request.upper.value = "2004";
+    ASSERT_EQ(app_.search(request)->size(), 3U);
+    request.upper.value = "2001";
+    EXPECT_EQ(app_.search(request).error().code, AppErrorCode::InvalidRange);
+}
+
+TEST_F(ApplicationTest, IndexStatesInputErrorsAndEmptyMatchesRemainDistinct) {
+    populate();
+    SearchRequest request;
+    request.lower.value = "8";
+    request.exactStrategy = ExactSearchStrategy::Tree;
+    EXPECT_EQ(app_.search(request).error().code, AppErrorCode::IndexNotBuilt);
+    ASSERT_TRUE(app_.buildIndexes());
+    ASSERT_TRUE(app_.addStudent({9, "New", "Name", 2000, 4.0}));
+    EXPECT_EQ(app_.search(request).error().code, AppErrorCode::IndexStale);
+    request.exactStrategy = ExactSearchStrategy::Linear;
+    ASSERT_EQ(app_.search(request)->size(), 1U);
+    request.lower.value = "999";
+    ASSERT_TRUE(app_.search(request));
+    EXPECT_TRUE(app_.search(request)->empty());
+    request.lower.value = "-1";
+    EXPECT_EQ(app_.search(request).error().code, AppErrorCode::NegativeNumber);
+}
+
+TEST_F(ApplicationTest, FailedLoadPreservesRecordsAndBuiltIndexesWithErrorContext) {
+    populate();
+    ASSERT_TRUE(app_.buildIndexes());
+    const auto path = directory_ / "bad.txt";
+    { std::ofstream file(path); file << "DOR2_STUDENT_DATA 1\n2\n7:\"A\":\"B\":2000:4\nbroken\n"; }
+    const auto loaded = app_.loadStudents(path);
+    ASSERT_FALSE(loaded);
+    EXPECT_EQ(loaded.error().code, AppErrorCode::FileRecord);
+    EXPECT_EQ(loaded.error().context.path, path);
+    EXPECT_EQ(loaded.error().context.lineNumber, 4U);
+    EXPECT_EQ(app_.getSearchService().getRepository().getCount(), 4U);
+    EXPECT_EQ(app_.getSearchService().findById(8, ExactSearchStrategy::Tree)->size(), 1U);
+}
+
+TEST_F(ApplicationTest, SuccessfulLoadRebuildsIndexesAndRoundTripsUnicode) {
+    populate();
+    const auto path = directory_ / "студенты.txt";
+    ASSERT_TRUE(app_.saveStudents(path));
+    ASSERT_TRUE(app_.generateStudents(2, 100));
+    ASSERT_TRUE(app_.loadStudents(path));
+    EXPECT_EQ(app_.getSearchService().getRepository().getCount(), 4U);
+    EXPECT_TRUE(app_.getSearchService().getIndexStatistics());
+    EXPECT_EQ(app_.getSearchService().getRepository().findById(1)->firstName, "Иван");
+    EXPECT_EQ(app_.saveStudents(directory_ / "missing" / "file.txt").error().code, AppErrorCode::FileOpen);
+}
+
+TEST_F(ApplicationTest, ComparisonUsesSeparateDataKeepsLastSuccessAndExportsCsv) {
+    populate();
+    const auto path = directory_ / "comparison.csv";
+    EXPECT_EQ(app_.exportBenchmark(path).error().code, AppErrorCode::NoBenchmarkResults);
+    EXPECT_FALSE(std::filesystem::exists(path));
+    ASSERT_TRUE(app_.runBenchmark(20, 10, 100));
+    ASSERT_EQ(app_.getLatestResults().size(), 21U);
+    for (const auto& row : app_.getLatestResults()) EXPECT_TRUE(row.verified);
+    EXPECT_EQ(app_.getSearchService().getRepository().getCount(), 4U);
+    EXPECT_EQ(app_.runBenchmark(10000, 10000, 100).error().code, AppErrorCode::InvalidWorkload);
+    EXPECT_EQ(app_.getLatestResults().size(), 21U);
+    ASSERT_TRUE(app_.exportBenchmark(path));
+    std::ifstream file(path);
+    std::string line;
+    ASSERT_TRUE(static_cast<bool>(std::getline(file, line)));
+    EXPECT_EQ(line, "DatasetSize,InputOrder,Algorithm,Operation,QueryCount,ElapsedUs,MatchCount,Seed,Verified");
+    std::size_t count = 0;
+    while (std::getline(file, line)) ++count;
+    EXPECT_EQ(count, 21U);
+}
