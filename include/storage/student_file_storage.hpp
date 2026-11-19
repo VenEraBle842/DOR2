@@ -12,11 +12,11 @@ class StudentFileStorage {
 public:
     static constexpr int formatVersion = 1;
 
-    static std::expected<DynamicArray<Student>, FileFailure> load(
+    static std::expected<DynamicArray<Student>, Error> load(
         const std::filesystem::path& path
     );
 
-    static std::expected<void, FileFailure> save(
+    static std::expected<void, Error> save(
         const std::filesystem::path& path,
         const StudentRepository& repository
     );

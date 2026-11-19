@@ -6,7 +6,7 @@
 int main() {
     const auto result = BenchmarkRunner::runAndSave("benchmark_results.csv", 1000, 200, 100);
     if (!result) {
-        std::cerr << formatError(makeError(result.error())) << '\n';
+        std::cerr << formatError(result.error()) << '\n';
         return EXIT_FAILURE;
     }
     for (const BenchmarkResult& row : *result) {

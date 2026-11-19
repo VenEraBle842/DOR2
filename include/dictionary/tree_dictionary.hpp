@@ -87,9 +87,9 @@ public:
         }
     }
 
-    std::expected<void, DictionaryError> add(const TKey& key, const TValue& value) override {
+    std::expected<void, Error> add(const TKey& key, const TValue& value) override {
         if (!tree_.insert(std::make_shared<Entry>(key, value))) {
-            return std::unexpected(DictionaryError::DuplicateKey);
+            return std::unexpected(makeError(ErrorCode::DuplicateKey));
         }
         return {};
     }

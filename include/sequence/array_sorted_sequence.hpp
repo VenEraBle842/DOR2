@@ -45,10 +45,10 @@ public:
         return binarySearch(*this, element, IdentityExtractor{}, compare_);
     }
 
-    std::expected<std::unique_ptr<ISortedSequence<T>>, SequenceError>
+    std::expected<std::unique_ptr<ISortedSequence<T>>, Error>
     getSubsequence(std::size_t startIndex, std::size_t endIndex) const override {
         if (startIndex > endIndex || endIndex >= items_.size()) {
-            return std::unexpected(SequenceError::InvalidRange);
+            return std::unexpected(makeError(ErrorCode::InvalidRange));
         }
         auto result = std::make_unique<ArraySortedSequence<T, Compare>>();
         for (std::size_t index = startIndex; index <= endIndex; ++index) {

@@ -83,7 +83,7 @@ DynamicArray<TwoElement<int, int>> makeRangeQueries(std::size_t size, std::size_
     return queries;
 }
 
-std::expected<StudentSearchService, RepositoryError> makeBenchmarkService(
+std::expected<StudentSearchService, Error> makeBenchmarkService(
     const DynamicArray<int>& values
 ) {
     DynamicArray<Student> students;
@@ -119,7 +119,7 @@ Measurement measureMedian(Action action) {
 }
 
 template <typename Structure, typename Builder>
-std::expected<Measurement, BenchmarkFailure> measureBuild(Builder builder) {
+std::expected<Measurement, Error> measureBuild(Builder builder) {
     constexpr std::size_t repetitions = 5;
     {
         Structure warmup;
@@ -142,8 +142,8 @@ std::expected<Measurement, BenchmarkFailure> measureBuild(Builder builder) {
     return Measurement{samples.at(repetitions / 2), count};
 }
 
-bool sameIds(const std::expected<DynamicArray<RecordId>, ServiceError>& left,
-             const std::expected<DynamicArray<RecordId>, ServiceError>& right) {
+bool sameIds(const std::expected<DynamicArray<RecordId>, Error>& left,
+             const std::expected<DynamicArray<RecordId>, Error>& right) {
     if (!left || !right || left->size() != right->size()) return false;
     for (std::size_t index = 0; index < left->size(); ++index) {
         if ((*left)[index] != (*right)[index]) return false;
@@ -173,7 +173,7 @@ bool verifyRanges(
 
 void accumulateSearchResult(
     BatchResult& batch,
-    const std::expected<DynamicArray<RecordId>, ServiceError>& ids
+    const std::expected<DynamicArray<RecordId>, Error>& ids
 ) {
     if (!ids) {
         batch.checksum ^= 0xffffffffffffffffULL;
@@ -222,18 +222,14 @@ void appendResult(
         measurement.matchCount, seed, verified
     });
 }
-std::expected<DynamicArray<BenchmarkResult>, BenchmarkFailure> BenchmarkRunner::run(
+std::expected<DynamicArray<BenchmarkResult>, Error> BenchmarkRunner::run(
     std::size_t datasetSize,
     std::size_t queryCount,
     std::uint64_t seed
 ) {
     if (datasetSize > maxDatasetSize || queryCount > maxQueryCount ||
         (datasetSize != 0 && queryCount > maxWorkload / datasetSize)) {
-        return std::unexpected(BenchmarkFailure{
-            BenchmarkError::InvalidWorkload,
-            "maximum dataset/query count is 10000; dataset size * query count must not exceed 10000000",
-            std::nullopt
-        });
+        return std::unexpected(makeError(ErrorCode::InvalidWorkload));
     }
     DynamicArray<BenchmarkResult> results;
     for (int orderNumber = 0; orderNumber < 3; ++orderNumber) {
@@ -244,14 +240,12 @@ std::expected<DynamicArray<BenchmarkResult>, BenchmarkFailure> BenchmarkRunner::
         const std::string name = orderName(order);
 
         const auto treeBuild = measureBuild<TreeDictionary<int, std::size_t>>(
-            [&values](auto& tree) -> std::expected<std::size_t, BenchmarkFailure> {
+            [&values](auto& tree) -> std::expected<std::size_t, Error> {
                 for (std::size_t index = 0; index < values.size(); ++index) {
                     const auto inserted = tree.add(values[index], index);
                     if (!inserted) {
-                        return std::unexpected(BenchmarkFailure{
-                            BenchmarkError::PreparationFailed,
-                            "cannot build benchmark tree: duplicate key", std::nullopt
-                        });
+                        return std::unexpected(makeError(ErrorCode::BenchmarkPreparation,
+                            {.detail = "cannot build benchmark tree: duplicate key"}));
                     }
                 }
                 return tree.getCount();
@@ -261,7 +255,7 @@ std::expected<DynamicArray<BenchmarkResult>, BenchmarkFailure> BenchmarkRunner::
                      *treeBuild, seed, treeBuild->matchCount == datasetSize);
 
         const auto sortedBuild = measureBuild<ArraySortedSequence<int>>(
-            [&values](auto& sequence) -> std::expected<std::size_t, BenchmarkFailure> {
+            [&values](auto& sequence) -> std::expected<std::size_t, Error> {
                 for (const int value : values) sequence.add(value);
                 return sequence.getLength();
             });
@@ -271,10 +265,8 @@ std::expected<DynamicArray<BenchmarkResult>, BenchmarkFailure> BenchmarkRunner::
 
         const auto prepared = makeBenchmarkService(values);
         if (!prepared) {
-            return std::unexpected(BenchmarkFailure{
-                BenchmarkError::PreparationFailed,
-                "cannot prepare benchmark data: " + toString(prepared.error()), std::nullopt
-            });
+            return std::unexpected(makeError(ErrorCode::BenchmarkPreparation,
+                {.detail = "cannot prepare benchmark data: " + formatError(prepared.error())}));
         }
         const StudentSearchService& service = *prepared;
         const bool exactVerified = verifyExact(service, queries);
@@ -299,7 +291,7 @@ std::expected<DynamicArray<BenchmarkResult>, BenchmarkFailure> BenchmarkRunner::
     return results;
 }
 
-std::expected<void, FileFailure> BenchmarkRunner::saveCsv(
+std::expected<void, Error> BenchmarkRunner::saveCsv(
     const std::filesystem::path& path,
     const DynamicArray<BenchmarkResult>& results
 ) {
@@ -308,9 +300,8 @@ std::expected<void, FileFailure> BenchmarkRunner::saveCsv(
     std::ofstream output(temporaryPath, std::ios::trunc);
     output.imbue(std::locale::classic());
     if (!output.is_open()) {
-        return std::unexpected(FileFailure{
-            FileError::OpenFailed, "cannot open benchmark CSV", path, 0
-        });
+        return std::unexpected(makeError(ErrorCode::FileOpen,
+            {.path = path, .detail = "cannot open benchmark CSV"}));
     }
     output << "DatasetSize,InputOrder,Algorithm,Operation,QueryCount,ElapsedUs,MatchCount,Seed,Verified\n";
     for (const BenchmarkResult& result : results) {
@@ -324,9 +315,8 @@ std::expected<void, FileFailure> BenchmarkRunner::saveCsv(
         output.close();
         std::error_code ignored;
         std::filesystem::remove(temporaryPath, ignored);
-        return std::unexpected(FileFailure{
-            FileError::WriteFailed, "failed to write benchmark CSV", path, 0
-        });
+        return std::unexpected(makeError(ErrorCode::FileWrite,
+            {.path = path, .detail = "failed to write benchmark CSV"}));
     }
     output.close();
     std::error_code renameError;
@@ -334,14 +324,13 @@ std::expected<void, FileFailure> BenchmarkRunner::saveCsv(
     if (renameError) {
         std::error_code ignored;
         std::filesystem::remove(temporaryPath, ignored);
-        return std::unexpected(FileFailure{
-            FileError::WriteFailed, renameError.message(), path, 0
-        });
+        return std::unexpected(makeError(ErrorCode::FileWrite,
+            {.path = path, .detail = renameError.message()}));
     }
     return {};
 }
 
-std::expected<DynamicArray<BenchmarkResult>, BenchmarkFailure> BenchmarkRunner::runAndSave(
+std::expected<DynamicArray<BenchmarkResult>, Error> BenchmarkRunner::runAndSave(
     const std::filesystem::path& path,
     std::size_t datasetSize,
     std::size_t queryCount,
@@ -350,9 +339,7 @@ std::expected<DynamicArray<BenchmarkResult>, BenchmarkFailure> BenchmarkRunner::
     auto results = run(datasetSize, queryCount, seed);
     if (!results) return std::unexpected(results.error());
     if (auto saved = saveCsv(path, *results); !saved) {
-        return std::unexpected(BenchmarkFailure{
-            BenchmarkError::FileOperationFailed, saved.error().message, saved.error()
-        });
+        return std::unexpected(saved.error());
     }
     return results;
 }

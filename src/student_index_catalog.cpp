@@ -38,7 +38,7 @@ void StudentIndexCatalog::build(const StudentRepository& repository) {
     indexedSnapshotId_ = repository.getSnapshotId();
 }
 
-std::expected<StudentIndexStatistics, IndexError> StudentIndexCatalog::getStatistics(
+std::expected<StudentIndexStatistics, Error> StudentIndexCatalog::getStatistics(
     const StudentRepository& repository
 ) const {
     if (const auto state = checkIndexState(repository); !state) return std::unexpected(state.error());
@@ -51,7 +51,7 @@ std::expected<StudentIndexStatistics, IndexError> StudentIndexCatalog::getStatis
     };
 }
 
-std::expected<std::optional<std::size_t>, IndexError> StudentIndexCatalog::findPositionByIdTree(
+std::expected<std::optional<std::size_t>, Error> StudentIndexCatalog::findPositionByIdTree(
     const StudentRepository& repository,
     RecordId id
 ) const {

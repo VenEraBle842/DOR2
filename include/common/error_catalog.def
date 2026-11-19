@@ -1,4 +1,4 @@
-// Code, message, recovery hint. Add application errors here; both UIs use this catalog.
+// Code, message, recovery hint
 DOR2_ERROR(DuplicateId, "A student with this ID already exists.", "Choose a unique ID.")
 DOR2_ERROR(DuplicateKey, "This key already exists.", "Choose a unique key.")
 DOR2_ERROR(InvalidNumber, "Enter a valid number.", "Use a dot as the decimal separator and remove extra characters.")

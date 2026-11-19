@@ -76,16 +76,21 @@ public:
         return students_[*position];
     }
 
-    std::expected<void, RepositoryError> add(const Student& student) {
-        if (!std::isfinite(student.gpa)) return std::unexpected(RepositoryError::InvalidGpa);
+    std::expected<void, Error> add(const Student& student) {
+        if (!std::isfinite(student.gpa)) {
+            return std::unexpected(makeError(ErrorCode::NonFiniteNumber,
+                {.field = "GPA", .detail = "ID = " + std::to_string(student.id)}));
+        }
         if (positionsById_.containsKey(student.id)) {
-            return std::unexpected(RepositoryError::DuplicateId);
+            return std::unexpected(makeError(ErrorCode::DuplicateId,
+                {.field = "ID", .detail = "ID = " + std::to_string(student.id)}));
         }
         students_.push_back(student);
         const auto inserted = positionsById_.add(student.id, students_.size() - 1);
         if (!inserted) {
             students_.pop_back();
-            return std::unexpected(RepositoryError::DuplicateId);
+            return std::unexpected(makeError(ErrorCode::DuplicateId,
+                {.field = "ID", .detail = "ID = " + std::to_string(student.id)}));
         }
         markChanged();
         return {};
@@ -97,14 +102,16 @@ public:
         markChanged();
     }
 
-    std::expected<void, RepositoryError> replaceAll(DynamicArray<Student> replacement) {
+    std::expected<void, Error> replaceAll(DynamicArray<Student> replacement) {
         TreeDictionary<std::uint64_t, std::size_t> newPositions;
         for (std::size_t position = 0; position < replacement.size(); ++position) {
             if (!std::isfinite(replacement[position].gpa)) {
-                return std::unexpected(RepositoryError::InvalidGpa);
+                return std::unexpected(makeError(ErrorCode::NonFiniteNumber,
+                    {.field = "GPA", .detail = "ID = " + std::to_string(replacement[position].id)}));
             }
             if (!newPositions.add(replacement[position].id, position)) {
-                return std::unexpected(RepositoryError::DuplicateId);
+                return std::unexpected(makeError(ErrorCode::DuplicateId,
+                    {.field = "ID", .detail = "ID = " + std::to_string(replacement[position].id)}));
             }
         }
         students_ = std::move(replacement);

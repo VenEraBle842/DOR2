@@ -19,7 +19,7 @@ public:
     virtual std::optional<T> getFirst() const = 0;
     virtual std::optional<T> getLast() const = 0;
     virtual std::optional<std::size_t> indexOf(const T& element) const = 0;
-    virtual std::expected<std::unique_ptr<ISortedSequence<T>>, SequenceError>
+    virtual std::expected<std::unique_ptr<ISortedSequence<T>>, Error>
         getSubsequence(std::size_t startIndex, std::size_t endIndex) const = 0;
     virtual void add(const T& element) = 0;
     virtual void clear() noexcept = 0;

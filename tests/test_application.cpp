@@ -2,6 +2,7 @@
 
 #include "application/student_application.hpp"
 #include "common/number_input.hpp"
+#include "storage/student_file_storage.hpp"
 
 #include <chrono>
 #include <fstream>
@@ -28,39 +29,60 @@ protected:
 };
 
 TEST(NumberInputTest, RejectsInvalidAndOutOfRangeValuesWithoutThrowing) {
-    EXPECT_EQ(parseNumber<std::uint64_t>("-1", "ID").error().code, AppErrorCode::NegativeNumber);
+    EXPECT_EQ(parseNumber<std::uint64_t>("-1", "ID").error().code, ErrorCode::NegativeNumber);
     EXPECT_FALSE(parseNumber<std::uint64_t>("18446744073709551616", "ID"));
     EXPECT_FALSE(parseNumber<int>("2003x", "Year"));
     EXPECT_FALSE(parseNumber<double>("4,5", "GPA"));
     EXPECT_FALSE(parseNumber<double>("nan", "GPA"));
     EXPECT_FALSE(parseNumber<double>("inf", "GPA"));
     EXPECT_FALSE(parseNumber<int>("", "Year"));
-    EXPECT_EQ(parseBoundedSize("10001", "Count", 10000).error().code, AppErrorCode::LimitExceeded);
+    EXPECT_EQ(parseBoundedSize("10001", "Count", 10000).error().code, ErrorCode::LimitExceeded);
     EXPECT_EQ(*parseNumber<std::uint64_t>("18446744073709551615", "ID"), std::numeric_limits<std::uint64_t>::max());
     EXPECT_DOUBLE_EQ(*parseNumber<double>(" 4.125 ", "GPA"), 4.125);
 }
 
 TEST(ErrorCatalogTest, EveryCodeHasANameMessageAndRecoveryHint) {
-    for (std::size_t i = 0; i < static_cast<std::size_t>(AppErrorCode::Count); ++i) {
-        const auto& entry = describeError(static_cast<AppErrorCode>(i));
+    for (std::size_t i = 0; i < static_cast<std::size_t>(ErrorCode::Count); ++i) {
+        const auto& entry = describeError(static_cast<ErrorCode>(i));
         EXPECT_FALSE(entry.name.empty());
         EXPECT_FALSE(entry.message.empty());
         EXPECT_FALSE(entry.hint.empty());
     }
-    const FileFailure failure{FileError::InvalidRecord, "broken GPA", "students.txt", 7};
-    const auto formatted = formatError(makeError(failure));
+    const Error failure = makeError(ErrorCode::FileRecord,
+        {.path = "students.txt", .lineNumber = 7, .detail = "broken GPA"});
+    const auto formatted = formatError(failure);
     EXPECT_NE(formatted.find("students.txt"), std::string::npos);
     EXPECT_NE(formatted.find("Line: 7"), std::string::npos);
     EXPECT_NE(formatted.find("broken GPA"), std::string::npos);
-    EXPECT_EQ(makeError(RepositoryError::DuplicateId).code, makeError(FileError::DuplicateId).code);
-    EXPECT_EQ(makeError(IndexError::Stale).code, makeError(ServiceError::IndexStale).code);
+    EXPECT_EQ(describeError(ErrorCode::Count).name, "Unexpected");
+}
+
+TEST_F(ApplicationTest, FileErrorContextIsPreservedAcrossTheApplicationBoundary) {
+    const auto path = directory_ / "missing.txt";
+    const auto stored = StudentFileStorage::load(path);
+    const auto loaded = app_.loadStudents(path);
+    ASSERT_FALSE(stored);
+    ASSERT_FALSE(loaded);
+    EXPECT_EQ(loaded.error().code, stored.error().code);
+    EXPECT_EQ(loaded.error().context.path, path);
+    EXPECT_EQ(loaded.error().context.lineNumber, stored.error().context.lineNumber);
+    EXPECT_EQ(loaded.error().context.detail, stored.error().context.detail);
+}
+
+TEST_F(ApplicationTest, BenchmarkSaveErrorKeepsItsOriginalCodeAndFileContext) {
+    const auto path = directory_ / "missing" / "comparison.csv";
+    const auto result = BenchmarkRunner::runAndSave(path, 5, 2, 100);
+    ASSERT_FALSE(result);
+    EXPECT_EQ(result.error().code, ErrorCode::FileOpen);
+    EXPECT_EQ(result.error().context.path, path);
+    EXPECT_EQ(result.error().context.detail, "cannot open benchmark CSV");
 }
 
 TEST_F(ApplicationTest, DuplicateAndInvalidGpaUseCommonErrorsWithoutChangingRecords) {
     populate();
-    EXPECT_EQ(app_.addStudent({8, "Other", "Name", 2000, 3.0}).error().code, AppErrorCode::DuplicateId);
+    EXPECT_EQ(app_.addStudent({8, "Other", "Name", 2000, 3.0}).error().code, ErrorCode::DuplicateId);
     EXPECT_EQ(app_.addStudent({9, "Other", "Name", 2000, std::numeric_limits<double>::infinity()}).error().code,
-              AppErrorCode::NonFiniteNumber);
+              ErrorCode::NonFiniteNumber);
     EXPECT_EQ(app_.getSearchService().getRepository().getCount(), 4U);
 }
 
@@ -71,7 +93,7 @@ TEST_F(ApplicationTest, GenerationIsReproducibleBoundedAndSupportsEmptyData) {
     for (std::size_t i = 0; i < 25; ++i) {
         EXPECT_EQ(app_.getSearchService().getRepository().at(i), second.getSearchService().getRepository().at(i));
     }
-    EXPECT_EQ(app_.generateStudents(10001, 1).error().code, AppErrorCode::LimitExceeded);
+    EXPECT_EQ(app_.generateStudents(10001, 1).error().code, ErrorCode::LimitExceeded);
     EXPECT_EQ(app_.getSearchService().getRepository().getCount(), 25U);
     ASSERT_TRUE(app_.generateStudents(0, 123));
     EXPECT_TRUE(app_.getSearchService().getRepository().isEmpty());
@@ -126,7 +148,7 @@ TEST_F(ApplicationTest, RangeRequestsIncludeBoundsAndKeepKeyThenIdOrder) {
     request.upper.value = "2004";
     ASSERT_EQ(app_.search(request)->size(), 3U);
     request.upper.value = "2001";
-    EXPECT_EQ(app_.search(request).error().code, AppErrorCode::InvalidRange);
+    EXPECT_EQ(app_.search(request).error().code, ErrorCode::InvalidRange);
 }
 
 TEST_F(ApplicationTest, IndexStatesInputErrorsAndEmptyMatchesRemainDistinct) {
@@ -134,17 +156,17 @@ TEST_F(ApplicationTest, IndexStatesInputErrorsAndEmptyMatchesRemainDistinct) {
     SearchRequest request;
     request.lower.value = "8";
     request.exactStrategy = ExactSearchStrategy::Tree;
-    EXPECT_EQ(app_.search(request).error().code, AppErrorCode::IndexNotBuilt);
+    EXPECT_EQ(app_.search(request).error().code, ErrorCode::IndexNotBuilt);
     ASSERT_TRUE(app_.buildIndexes());
     ASSERT_TRUE(app_.addStudent({9, "New", "Name", 2000, 4.0}));
-    EXPECT_EQ(app_.search(request).error().code, AppErrorCode::IndexStale);
+    EXPECT_EQ(app_.search(request).error().code, ErrorCode::IndexStale);
     request.exactStrategy = ExactSearchStrategy::Linear;
     ASSERT_EQ(app_.search(request)->size(), 1U);
     request.lower.value = "999";
     ASSERT_TRUE(app_.search(request));
     EXPECT_TRUE(app_.search(request)->empty());
     request.lower.value = "-1";
-    EXPECT_EQ(app_.search(request).error().code, AppErrorCode::NegativeNumber);
+    EXPECT_EQ(app_.search(request).error().code, ErrorCode::NegativeNumber);
 }
 
 TEST_F(ApplicationTest, FailedLoadPreservesRecordsAndBuiltIndexesWithErrorContext) {
@@ -154,7 +176,7 @@ TEST_F(ApplicationTest, FailedLoadPreservesRecordsAndBuiltIndexesWithErrorContex
     { std::ofstream file(path); file << "DOR2_STUDENT_DATA 1\n2\n7:\"A\":\"B\":2000:4\nbroken\n"; }
     const auto loaded = app_.loadStudents(path);
     ASSERT_FALSE(loaded);
-    EXPECT_EQ(loaded.error().code, AppErrorCode::FileRecord);
+    EXPECT_EQ(loaded.error().code, ErrorCode::FileRecord);
     EXPECT_EQ(loaded.error().context.path, path);
     EXPECT_EQ(loaded.error().context.lineNumber, 4U);
     EXPECT_EQ(app_.getSearchService().getRepository().getCount(), 4U);
@@ -170,19 +192,19 @@ TEST_F(ApplicationTest, SuccessfulLoadRebuildsIndexesAndRoundTripsUnicode) {
     EXPECT_EQ(app_.getSearchService().getRepository().getCount(), 4U);
     EXPECT_TRUE(app_.getSearchService().getIndexStatistics());
     EXPECT_EQ(app_.getSearchService().getRepository().findById(1)->firstName, "Иван");
-    EXPECT_EQ(app_.saveStudents(directory_ / "missing" / "file.txt").error().code, AppErrorCode::FileOpen);
+    EXPECT_EQ(app_.saveStudents(directory_ / "missing" / "file.txt").error().code, ErrorCode::FileOpen);
 }
 
 TEST_F(ApplicationTest, ComparisonUsesSeparateDataKeepsLastSuccessAndExportsCsv) {
     populate();
     const auto path = directory_ / "comparison.csv";
-    EXPECT_EQ(app_.exportBenchmark(path).error().code, AppErrorCode::NoBenchmarkResults);
+    EXPECT_EQ(app_.exportBenchmark(path).error().code, ErrorCode::NoBenchmarkResults);
     EXPECT_FALSE(std::filesystem::exists(path));
     ASSERT_TRUE(app_.runBenchmark(20, 10, 100));
     ASSERT_EQ(app_.getLatestResults().size(), 21U);
     for (const auto& row : app_.getLatestResults()) EXPECT_TRUE(row.verified);
     EXPECT_EQ(app_.getSearchService().getRepository().getCount(), 4U);
-    EXPECT_EQ(app_.runBenchmark(10000, 10000, 100).error().code, AppErrorCode::InvalidWorkload);
+    EXPECT_EQ(app_.runBenchmark(10000, 10000, 100).error().code, ErrorCode::InvalidWorkload);
     EXPECT_EQ(app_.getLatestResults().size(), 21U);
     ASSERT_TRUE(app_.exportBenchmark(path));
     std::ifstream file(path);

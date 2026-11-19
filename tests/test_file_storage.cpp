@@ -46,38 +46,38 @@ TEST_F(StorageTest, SupportsEmptyDataSet) {
 
 TEST_F(StorageTest, RejectsHeaderVersionCountAndTrailingData) {
     write("BAD 1\n0\n");
-    EXPECT_EQ(StudentFileStorage::load(path_).error().code, FileError::InvalidHeader);
+    EXPECT_EQ(StudentFileStorage::load(path_).error().code, ErrorCode::FileHeader);
     write("DOR2_STUDENT_DATA 9\n0\n");
-    EXPECT_EQ(StudentFileStorage::load(path_).error().code, FileError::UnsupportedVersion);
+    EXPECT_EQ(StudentFileStorage::load(path_).error().code, ErrorCode::FileVersion);
     write("DOR2_STUDENT_DATA 1\n2\n1:\"A\":\"B\":2000:4\n");
-    EXPECT_EQ(StudentFileStorage::load(path_).error().code, FileError::RecordCountMismatch);
+    EXPECT_EQ(StudentFileStorage::load(path_).error().code, ErrorCode::FileCount);
     write("DOR2_STUDENT_DATA 1\n0\nextra\n");
-    EXPECT_EQ(StudentFileStorage::load(path_).error().code, FileError::TrailingData);
+    EXPECT_EQ(StudentFileStorage::load(path_).error().code, ErrorCode::FileTrailingData);
 }
 
 TEST_F(StorageTest, RejectsInvalidDuplicateAndNonFiniteRecords) {
     write("DOR2_STUDENT_DATA 1\n1\ninvalid\n");
-    EXPECT_EQ(StudentFileStorage::load(path_).error().code, FileError::InvalidRecord);
+    EXPECT_EQ(StudentFileStorage::load(path_).error().code, ErrorCode::FileRecord);
     write("DOR2_STUDENT_DATA 1\n2\n1:\"A\":\"B\":2000:4\n1:\"C\":\"D\":2001:5\n");
-    EXPECT_EQ(StudentFileStorage::load(path_).error().code, FileError::DuplicateId);
+    EXPECT_EQ(StudentFileStorage::load(path_).error().code, ErrorCode::DuplicateId);
     write("DOR2_STUDENT_DATA 1\n1\n1:\"A\":\"B\":2000:nan\n");
-    EXPECT_EQ(StudentFileStorage::load(path_).error().code, FileError::InvalidRecord);
+    EXPECT_EQ(StudentFileStorage::load(path_).error().code, ErrorCode::FileRecord);
     write("DOR2_STUDENT_DATA 1\n1\n1:\"A\":\"B\":2000:inf\n");
-    EXPECT_EQ(StudentFileStorage::load(path_).error().code, FileError::InvalidRecord);
+    EXPECT_EQ(StudentFileStorage::load(path_).error().code, ErrorCode::FileRecord);
 }
 
 TEST_F(StorageTest, FailedLoadDoesNotReturnPartialData) {
     write("DOR2_STUDENT_DATA 1\n2\n7:\"Valid\":\"Record\":2000:4\nbroken\n");
     const auto loaded = StudentFileStorage::load(path_);
     ASSERT_FALSE(loaded.has_value());
-    EXPECT_EQ(loaded.error().code, FileError::InvalidRecord);
-    EXPECT_EQ(loaded.error().lineNumber, 4U);
-    EXPECT_EQ(loaded.error().path, path_);
+    EXPECT_EQ(loaded.error().code, ErrorCode::FileRecord);
+    EXPECT_EQ(loaded.error().context.lineNumber, 4U);
+    EXPECT_EQ(loaded.error().context.path, path_);
 }
 
 TEST_F(StorageTest, ReportsOpenFailure) {
-    EXPECT_EQ(StudentFileStorage::load(path_ / "missing").error().code, FileError::OpenFailed);
+    EXPECT_EQ(StudentFileStorage::load(path_ / "missing").error().code, ErrorCode::FileOpen);
     StudentRepository repository;
     EXPECT_EQ(StudentFileStorage::save(path_ / "missing", repository).error().code,
-              FileError::OpenFailed);
+              ErrorCode::FileOpen);
 }

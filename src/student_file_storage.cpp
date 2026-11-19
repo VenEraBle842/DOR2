@@ -9,33 +9,26 @@
 #include <string>
 #include <system_error>
 
-FileFailure makeFileFailure(
-    FileError code,
-    const std::filesystem::path& path,
-    std::string message,
-    std::size_t lineNumber = 0
-) {
-    return FileFailure{code, std::move(message), path, lineNumber};
-}
-
 bool hasNonWhitespace(const std::string& text) {
     for (const char character : text) {
         if (!std::isspace(static_cast<unsigned char>(character))) return true;
     }
     return false;
 }
-std::expected<DynamicArray<Student>, FileFailure> StudentFileStorage::load(
+std::expected<DynamicArray<Student>, Error> StudentFileStorage::load(
     const std::filesystem::path& path
 ) {
     std::ifstream input(path);
     input.imbue(std::locale::classic());
     if (!input.is_open()) {
-        return std::unexpected(makeFileFailure(FileError::OpenFailed, path, "cannot open input file"));
+        return std::unexpected(makeError(ErrorCode::FileOpen,
+            {.path = path, .detail = "cannot open input file"}));
     }
 
     std::string line;
     if (!std::getline(input, line)) {
-        return std::unexpected(makeFileFailure(FileError::InvalidHeader, path, "missing format header", 1));
+        return std::unexpected(makeError(ErrorCode::FileHeader,
+            {.path = path, .lineNumber = 1, .detail = "missing format header"}));
     }
 
     std::istringstream header(line);
@@ -43,28 +36,34 @@ std::expected<DynamicArray<Student>, FileFailure> StudentFileStorage::load(
     std::string signature;
     int version = 0;
     if (!(header >> signature >> version) || signature != "DOR2_STUDENT_DATA") {
-        return std::unexpected(makeFileFailure(FileError::InvalidHeader, path, "expected DOR2_STUDENT_DATA header", 1));
+        return std::unexpected(makeError(ErrorCode::FileHeader,
+            {.path = path, .lineNumber = 1, .detail = "expected DOR2_STUDENT_DATA header"}));
     }
     header >> std::ws;
     if (header.peek() != std::char_traits<char>::eof()) {
-        return std::unexpected(makeFileFailure(FileError::InvalidHeader, path, "unexpected header fields", 1));
+        return std::unexpected(makeError(ErrorCode::FileHeader,
+            {.path = path, .lineNumber = 1, .detail = "unexpected header fields"}));
     }
     if (version != formatVersion) {
-        return std::unexpected(makeFileFailure(FileError::UnsupportedVersion, path, "unsupported data version", 1));
+        return std::unexpected(makeError(ErrorCode::FileVersion,
+            {.path = path, .lineNumber = 1, .detail = "unsupported data version"}));
     }
 
     if (!std::getline(input, line)) {
-        return std::unexpected(makeFileFailure(FileError::RecordCountMismatch, path, "missing record count", 2));
+        return std::unexpected(makeError(ErrorCode::FileCount,
+            {.path = path, .lineNumber = 2, .detail = "missing record count"}));
     }
     std::istringstream countStream(line);
     countStream.imbue(std::locale::classic());
     std::size_t expectedCount = 0;
     if (!(countStream >> expectedCount)) {
-        return std::unexpected(makeFileFailure(FileError::RecordCountMismatch, path, "invalid record count", 2));
+        return std::unexpected(makeError(ErrorCode::FileCount,
+            {.path = path, .lineNumber = 2, .detail = "invalid record count"}));
     }
     countStream >> std::ws;
     if (countStream.peek() != std::char_traits<char>::eof()) {
-        return std::unexpected(makeFileFailure(FileError::RecordCountMismatch, path, "unexpected count fields", 2));
+        return std::unexpected(makeError(ErrorCode::FileCount,
+            {.path = path, .lineNumber = 2, .detail = "unexpected count fields"}));
     }
 
     DynamicArray<Student> students;
@@ -72,22 +71,24 @@ std::expected<DynamicArray<Student>, FileFailure> StudentFileStorage::load(
     for (std::size_t index = 0; index < expectedCount; ++index) {
         const std::size_t lineNumber = index + 3;
         if (!std::getline(input, line)) {
-            return std::unexpected(makeFileFailure(
-                FileError::RecordCountMismatch, path, "fewer records than declared", lineNumber
-            ));
+            return std::unexpected(makeError(ErrorCode::FileCount,
+                {.path = path, .lineNumber = lineNumber, .detail = "fewer records than declared"}));
         }
         std::istringstream recordStream(line);
         recordStream.imbue(std::locale::classic());
         Student student;
         if (!(recordStream >> student)) {
-            return std::unexpected(makeFileFailure(FileError::InvalidRecord, path, "invalid student record", lineNumber));
+            return std::unexpected(makeError(ErrorCode::FileRecord,
+                {.path = path, .lineNumber = lineNumber, .detail = "invalid student record"}));
         }
         recordStream >> std::ws;
         if (recordStream.peek() != std::char_traits<char>::eof()) {
-            return std::unexpected(makeFileFailure(FileError::InvalidRecord, path, "trailing record data", lineNumber));
+            return std::unexpected(makeError(ErrorCode::FileRecord,
+                {.path = path, .lineNumber = lineNumber, .detail = "trailing record data"}));
         }
         if (!seenIds.add(student.id, true)) {
-            return std::unexpected(makeFileFailure(FileError::DuplicateId, path, "duplicate student id", lineNumber));
+            return std::unexpected(makeError(ErrorCode::DuplicateId,
+                {.path = path, .lineNumber = lineNumber, .detail = "duplicate student id"}));
         }
         students.push_back(std::move(student));
     }
@@ -95,17 +96,19 @@ std::expected<DynamicArray<Student>, FileFailure> StudentFileStorage::load(
     std::size_t lineNumber = expectedCount + 3;
     while (std::getline(input, line)) {
         if (hasNonWhitespace(line)) {
-            return std::unexpected(makeFileFailure(FileError::TrailingData, path, "unexpected data after records", lineNumber));
+            return std::unexpected(makeError(ErrorCode::FileTrailingData,
+                {.path = path, .lineNumber = lineNumber, .detail = "unexpected data after records"}));
         }
         ++lineNumber;
     }
     if (input.bad()) {
-        return std::unexpected(makeFileFailure(FileError::ReadFailed, path, "input stream failure", lineNumber));
+        return std::unexpected(makeError(ErrorCode::FileRead,
+            {.path = path, .lineNumber = lineNumber, .detail = "input stream failure"}));
     }
     return students;
 }
 
-std::expected<void, FileFailure> StudentFileStorage::save(
+std::expected<void, Error> StudentFileStorage::save(
     const std::filesystem::path& path,
     const StudentRepository& repository
 ) {
@@ -115,7 +118,8 @@ std::expected<void, FileFailure> StudentFileStorage::save(
     std::ofstream output(temporaryPath, std::ios::trunc);
     output.imbue(std::locale::classic());
     if (!output.is_open()) {
-        return std::unexpected(makeFileFailure(FileError::OpenFailed, path, "cannot open temporary output file"));
+        return std::unexpected(makeError(ErrorCode::FileOpen,
+            {.path = path, .detail = "cannot open temporary output file"}));
     }
 
     output << "DOR2_STUDENT_DATA " << formatVersion << '\n';
@@ -126,7 +130,8 @@ std::expected<void, FileFailure> StudentFileStorage::save(
             output.close();
             std::error_code ignored;
             std::filesystem::remove(temporaryPath, ignored);
-            return std::unexpected(makeFileFailure(FileError::WriteFailed, path, "failed while writing records"));
+            return std::unexpected(makeError(ErrorCode::FileWrite,
+                {.path = path, .detail = "failed while writing records"}));
         }
     }
     output.flush();
@@ -134,13 +139,15 @@ std::expected<void, FileFailure> StudentFileStorage::save(
         output.close();
         std::error_code ignored;
         std::filesystem::remove(temporaryPath, ignored);
-        return std::unexpected(makeFileFailure(FileError::WriteFailed, path, "failed to flush output"));
+        return std::unexpected(makeError(ErrorCode::FileWrite,
+            {.path = path, .detail = "failed to flush output"}));
     }
     output.close();
     if (!output) {
         std::error_code ignored;
         std::filesystem::remove(temporaryPath, ignored);
-        return std::unexpected(makeFileFailure(FileError::WriteFailed, path, "failed to close output"));
+        return std::unexpected(makeError(ErrorCode::FileWrite,
+            {.path = path, .detail = "failed to close output"}));
     }
 
     std::error_code renameError;
@@ -148,7 +155,8 @@ std::expected<void, FileFailure> StudentFileStorage::save(
     if (renameError) {
         std::error_code ignored;
         std::filesystem::remove(temporaryPath, ignored);
-        return std::unexpected(makeFileFailure(FileError::WriteFailed, path, renameError.message()));
+        return std::unexpected(makeError(ErrorCode::FileWrite,
+            {.path = path, .detail = renameError.message()}));
     }
     return {};
 }

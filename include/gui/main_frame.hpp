@@ -34,12 +34,12 @@ class MainFrame : public wxFrame {
         std::string indexState;
     };
     struct TaskOutcome {
-        std::optional<AppError> error;
+        std::optional<Error> error;
         std::optional<Snapshot> snapshot;
         std::optional<DynamicArray<Student>> matches;
     };
     enum class DataEffect { None, Changed, Loaded, Saved, Search };
-    using Action = std::function<std::expected<void, AppError>(StudentApplication&, TaskOutcome&)>;
+    using Action = std::function<std::expected<void, Error>(StudentApplication&, TaskOutcome&)>;
 
     StudentApplication application_;
     std::jthread worker_;
@@ -47,7 +47,7 @@ class MainFrame : public wxFrame {
     bool closeAfterTask_{false};
     bool dirty_{false};
     bool suppressErrorDialogs_{false};
-    std::optional<AppError> lastError_;
+    std::optional<Error> lastError_;
     Snapshot snapshot_;
 
     wxNotebook* notebook_{};
@@ -91,7 +91,7 @@ class MainFrame : public wxFrame {
     void runBenchmark();
     void exportBenchmark();
     void buildIndexes();
-    void showError(const AppError& error);
+    void showError(const Error& error);
     void setBusy(bool busy, const std::string& message);
     void refreshSnapshot();
     void runTask(const std::string& label, Action action, DataEffect effect = DataEffect::None);

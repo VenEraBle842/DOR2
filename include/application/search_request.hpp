@@ -20,22 +20,22 @@ struct SearchRequest {
     SearchKeyInput upper;
 };
 
-inline std::expected<DynamicArray<RecordId>, AppError> executeSearch(
+inline std::expected<DynamicArray<RecordId>, Error> executeSearch(
     const StudentSearchService& service, const SearchRequest& request
 ) {
     const auto& lower = request.lower;
     const auto& upper = request.upper;
-    std::expected<DynamicArray<RecordId>, ServiceError> result;
+    std::expected<DynamicArray<RecordId>, Error> result;
     switch (request.attribute) {
         case SearchAttribute::Id: {
-            if (request.range) return std::unexpected(makeError(AppErrorCode::UnknownSelection, {.field = "Range attribute"}));
+            if (request.range) return std::unexpected(makeError(ErrorCode::UnknownSelection, {.field = "Range attribute"}));
             const auto key = parseNumber<RecordId>(lower.value, "ID");
             if (!key) return std::unexpected(key.error());
             result = service.findById(*key, request.exactStrategy);
             break;
         }
         case SearchAttribute::LastName:
-            if (request.range) return std::unexpected(makeError(AppErrorCode::UnknownSelection, {.field = "Range attribute"}));
+            if (request.range) return std::unexpected(makeError(ErrorCode::UnknownSelection, {.field = "Range attribute"}));
             result = service.findByLastName(lower.value, request.exactStrategy);
             break;
         case SearchAttribute::BirthYear: {
@@ -70,8 +70,7 @@ inline std::expected<DynamicArray<RecordId>, AppError> executeSearch(
             } else result = service.findByCompositeKey(low, request.exactStrategy);
             break;
         }
-        default: return std::unexpected(makeError(AppErrorCode::UnknownSelection, {.field = "Search attribute"}));
+        default: return std::unexpected(makeError(ErrorCode::UnknownSelection, {.field = "Search attribute"}));
     }
-    if (!result) return std::unexpected(makeError(result.error()));
-    return std::move(*result);
+    return result;
 }

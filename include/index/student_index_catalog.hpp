@@ -75,14 +75,14 @@ private:
         }
     }
 
-    std::expected<void, IndexError> checkIndexState(const StudentRepository& repository) const {
-        if (!indexedSnapshotId_) return std::unexpected(IndexError::NotBuilt);
-        if (*indexedSnapshotId_ != repository.getSnapshotId()) return std::unexpected(IndexError::Stale);
+    std::expected<void, Error> checkIndexState(const StudentRepository& repository) const {
+        if (!indexedSnapshotId_) return std::unexpected(makeError(ErrorCode::IndexNotBuilt));
+        if (*indexedSnapshotId_ != repository.getSnapshotId()) return std::unexpected(makeError(ErrorCode::IndexStale));
         return {};
     }
 
     template <typename Key, typename Compare>
-    std::expected<RecordIds, IndexError> findExactTree(
+    std::expected<RecordIds, Error> findExactTree(
         const StudentRepository& repository,
         const TreeDictionary<Key, RecordIds, Compare>& dictionary,
         const Key& key
@@ -93,7 +93,7 @@ private:
     }
 
     template <typename Key, typename Sequence, typename Compare = std::less<Key>>
-    std::expected<RecordIds, IndexError> findExactBinary(
+    std::expected<RecordIds, Error> findExactBinary(
         const StudentRepository& repository,
         const Sequence& sequence,
         const Key& key,
@@ -109,7 +109,7 @@ private:
     }
 
     template <typename Key, typename Sequence, typename Compare = std::less<Key>>
-    std::expected<RecordIds, IndexError> findRangeBinary(
+    std::expected<RecordIds, Error> findRangeBinary(
         const StudentRepository& repository,
         const Sequence& sequence,
         const Key& lower,
@@ -119,7 +119,7 @@ private:
         if (const auto state = checkIndexState(repository); !state) {
             return std::unexpected(state.error());
         }
-        if (compare(upper, lower)) return std::unexpected(IndexError::InvalidRange);
+        if (compare(upper, lower)) return std::unexpected(makeError(ErrorCode::InvalidRange));
         RecordIds result;
         const std::size_t begin = lowerBound(sequence, lower, IndexEntryKeyExtractor<Key>{}, compare);
         const std::size_t end = upperBound(sequence, upper, IndexEntryKeyExtractor<Key>{}, compare);
@@ -137,73 +137,73 @@ public:
         return indexedSnapshotId_.has_value() && *indexedSnapshotId_ != repository.getSnapshotId();
     }
 
-    std::expected<StudentIndexStatistics, IndexError> getStatistics(
+    std::expected<StudentIndexStatistics, Error> getStatistics(
         const StudentRepository& repository
     ) const;
 
-    std::expected<std::optional<std::size_t>, IndexError> findPositionByIdTree(
+    std::expected<std::optional<std::size_t>, Error> findPositionByIdTree(
         const StudentRepository& repository,
         RecordId id
     ) const;
 
-    std::expected<RecordIds, IndexError> findByIdBinary(
+    std::expected<RecordIds, Error> findByIdBinary(
         const StudentRepository& repository, RecordId id
     ) const { return findExactBinary(repository, idSortedArrayIndex_, id); }
 
-    std::expected<RecordIds, IndexError> findByLastNameTree(
+    std::expected<RecordIds, Error> findByLastNameTree(
         const StudentRepository& repository, const std::string& key
     ) const { return findExactTree(repository, lastNameTreeIndex_, key); }
 
-    std::expected<RecordIds, IndexError> findByLastNameBinary(
+    std::expected<RecordIds, Error> findByLastNameBinary(
         const StudentRepository& repository, const std::string& key
     ) const { return findExactBinary(repository, lastNameSortedArrayIndex_, key); }
 
-    std::expected<RecordIds, IndexError> findByBirthYearTree(
+    std::expected<RecordIds, Error> findByBirthYearTree(
         const StudentRepository& repository, int key
     ) const { return findExactTree(repository, birthYearTreeIndex_, key); }
 
-    std::expected<RecordIds, IndexError> findByBirthYearBinary(
+    std::expected<RecordIds, Error> findByBirthYearBinary(
         const StudentRepository& repository, int key
     ) const { return findExactBinary(repository, birthYearSortedArrayIndex_, key); }
 
-    std::expected<RecordIds, IndexError> findByGpaTree(
+    std::expected<RecordIds, Error> findByGpaTree(
         const StudentRepository& repository, double key
     ) const {
-        if (!std::isfinite(key)) return std::unexpected(IndexError::InvalidKey);
+        if (!std::isfinite(key)) return std::unexpected(makeError(ErrorCode::NonFiniteNumber));
         return findExactTree(repository, gpaTreeIndex_, key);
     }
 
-    std::expected<RecordIds, IndexError> findByGpaBinary(
+    std::expected<RecordIds, Error> findByGpaBinary(
         const StudentRepository& repository, double key
     ) const {
-        if (!std::isfinite(key)) return std::unexpected(IndexError::InvalidKey);
+        if (!std::isfinite(key)) return std::unexpected(makeError(ErrorCode::NonFiniteNumber));
         return findExactBinary(repository, gpaSortedArrayIndex_, key);
     }
 
-    std::expected<RecordIds, IndexError> findByCompositeKeyTree(
+    std::expected<RecordIds, Error> findByCompositeKeyTree(
         const StudentRepository& repository, const StudentCompositeKey& key
     ) const { return findExactTree(repository, compositeTreeIndex_, key); }
 
-    std::expected<RecordIds, IndexError> findByCompositeKeyBinary(
+    std::expected<RecordIds, Error> findByCompositeKeyBinary(
         const StudentRepository& repository, const StudentCompositeKey& key
     ) const {
         return findExactBinary(repository, compositeSortedArrayIndex_, key, StudentCompositeKeyCompare{});
     }
 
-    std::expected<RecordIds, IndexError> findInBirthYearRangeBinary(
+    std::expected<RecordIds, Error> findInBirthYearRangeBinary(
         const StudentRepository& repository, int lower, int upper
     ) const { return findRangeBinary(repository, birthYearSortedArrayIndex_, lower, upper); }
 
-    std::expected<RecordIds, IndexError> findInGpaRangeBinary(
+    std::expected<RecordIds, Error> findInGpaRangeBinary(
         const StudentRepository& repository, double lower, double upper
     ) const {
         if (!std::isfinite(lower) || !std::isfinite(upper)) {
-            return std::unexpected(IndexError::InvalidKey);
+            return std::unexpected(makeError(ErrorCode::NonFiniteNumber));
         }
         return findRangeBinary(repository, gpaSortedArrayIndex_, lower, upper);
     }
 
-    std::expected<RecordIds, IndexError> findInCompositeKeyRangeBinary(
+    std::expected<RecordIds, Error> findInCompositeKeyRangeBinary(
         const StudentRepository& repository,
         const StudentCompositeKey& lower,
         const StudentCompositeKey& upper

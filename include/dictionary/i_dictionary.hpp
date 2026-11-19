@@ -16,7 +16,7 @@ public:
     virtual std::optional<std::size_t> getCapacity() const noexcept = 0;
     virtual bool containsKey(const TKey& key) const = 0;
     virtual std::optional<TValue> find(const TKey& key) const = 0;
-    virtual std::expected<void, DictionaryError> add(const TKey& key, const TValue& value) = 0;
+    virtual std::expected<void, Error> add(const TKey& key, const TValue& value) = 0;
     virtual bool update(const TKey& key, const TValue& value) = 0;
     virtual bool remove(const TKey& key) = 0;
     virtual DynamicArray<TKey> getKeys() const = 0;

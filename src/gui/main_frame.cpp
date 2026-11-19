@@ -23,7 +23,7 @@ wxString gpaText(double gpa) {
     return wxString::FromUTF8(buffer, static_cast<std::size_t>(converted.ptr - buffer));
 }
 
-void errorDialog(wxWindow* parent, const AppError& error) {
+void errorDialog(wxWindow* parent, const Error& error) {
     wxMessageBox(ui(formatError(error)), "Operation failed", wxOK | wxICON_ERROR, parent);
 }
 
@@ -71,7 +71,7 @@ wxTextCtrl* input(wxWindow* parent, wxSizer* sizer, const wxString& label,
 }
 
 using FormFields = DynamicArray<TwoElement<std::string, std::string>>;
-using SubmitForm = std::function<std::expected<void, AppError>(const DynamicArray<std::string>&)>;
+using SubmitForm = std::function<std::expected<void, Error>(const DynamicArray<std::string>&)>;
 
 void showForm(wxWindow* parent, const wxString& title, const FormFields& fields, SubmitForm submit) {
     wxDialog dialog(parent, wxID_ANY, title, wxDefaultPosition, wxDefaultSize,
@@ -352,7 +352,7 @@ wxPanel* MainFrame::createBenchmarkPage() {
     return page;
 }
 
-void MainFrame::showError(const AppError& error) {
+void MainFrame::showError(const Error& error) {
     lastError_ = error;
     if (!suppressErrorDialogs_) errorDialog(this, error);
 }
@@ -361,7 +361,7 @@ void MainFrame::addStudent() {
     if (busy_) return;
     showForm(this, "Add student", {{"ID", ""}, {"First name", ""}, {"Last name", ""},
                                   {"Birth year", "2003"}, {"GPA", "4.0"}},
-        [this](const DynamicArray<std::string>& values) -> std::expected<void, AppError> {
+        [this](const DynamicArray<std::string>& values) -> std::expected<void, Error> {
             const auto id = parseNumber<RecordId>(values[0], "ID");
             const auto year = parseNumber<int>(values[3], "Birth year");
             const auto gpa = parseNumber<double>(values[4], "GPA");
@@ -385,7 +385,7 @@ bool MainFrame::confirmReplace() {
 void MainFrame::generateStudents() {
     if (busy_) return;
     showForm(this, "Generate student data", {{"Record count", "1000"}, {"Seed", "100"}},
-        [this](const DynamicArray<std::string>& values) -> std::expected<void, AppError> {
+        [this](const DynamicArray<std::string>& values) -> std::expected<void, Error> {
             const auto count = parseBoundedSize(values[0], "Record count", StudentApplication::maxGeneratedRecords);
             const auto seed = parseNumber<std::uint64_t>(values[1], "Seed");
             if (!count) return std::unexpected(count.error());
@@ -439,7 +439,7 @@ void MainFrame::search() {
     request.upper = {text(upperValue_), text(upperFirstName_), text(upperYear_)};
     matches_->setRows({});
     matchCount_->SetLabel("Searching...");
-    runTask("Search complete", [request](StudentApplication& app, TaskOutcome& outcome) -> std::expected<void, AppError> {
+    runTask("Search complete", [request](StudentApplication& app, TaskOutcome& outcome) -> std::expected<void, Error> {
         const auto result = app.search(request);
         if (!result) return std::unexpected(result.error());
         outcome.matches = resolveMatches(app.getSearchService(), *result);
@@ -456,7 +456,7 @@ void MainFrame::runBenchmark() {
     if (!queries) { showError(queries.error()); return; }
     if (!seed) { showError(seed.error()); return; }
     if (*size != 0 && *queries > BenchmarkRunner::maxWorkload / *size) {
-        showError(makeError(AppErrorCode::InvalidWorkload));
+        showError(makeError(ErrorCode::InvalidWorkload));
         return;
     }
     runTask("Comparison complete", [size, queries, seed](StudentApplication& app, TaskOutcome&) {
@@ -466,7 +466,7 @@ void MainFrame::runBenchmark() {
 
 void MainFrame::exportBenchmark() {
     if (busy_) return;
-    if (snapshot_.benchmark.empty()) { showError(makeError(AppErrorCode::NoBenchmarkResults)); return; }
+    if (snapshot_.benchmark.empty()) { showError(makeError(ErrorCode::NoBenchmarkResults)); return; }
     wxFileDialog dialog(this, "Export comparison", "", "benchmark_results.csv", "CSV files (*.csv)|*.csv|All files|*",
                         wxFD_SAVE | wxFD_OVERWRITE_PROMPT);
     if (dialog.ShowModal() != wxID_OK) return;
@@ -546,12 +546,12 @@ void MainFrame::runTask(const std::string& label, Action action, DataEffect effe
                 const auto result = action(application_, *outcome);
                 if (!result) outcome->error = result.error();
             } catch (const std::exception& error) {
-                outcome->error = makeError(AppErrorCode::Unexpected, {.detail = error.what()});
-            } catch (...) { outcome->error = makeError(AppErrorCode::Unexpected); }
+                outcome->error = makeError(ErrorCode::Unexpected, {.detail = error.what()});
+            } catch (...) { outcome->error = makeError(ErrorCode::Unexpected); }
             try { outcome->snapshot = takeSnapshot(application_); }
             catch (const std::exception& error) {
-                outcome->error = makeError(AppErrorCode::Unexpected, {.detail = error.what()});
-            } catch (...) { outcome->error = makeError(AppErrorCode::Unexpected); }
+                outcome->error = makeError(ErrorCode::Unexpected, {.detail = error.what()});
+            } catch (...) { outcome->error = makeError(ErrorCode::Unexpected); }
             CallAfter([this, outcome, label, effect] {
                 if (worker_.joinable()) worker_.join();
                 setBusy(false, outcome->error ? "Operation failed" : label);
@@ -579,7 +579,7 @@ void MainFrame::runTask(const std::string& label, Action action, DataEffect effe
         });
     } catch (const std::exception& error) {
         setBusy(false, "Operation failed");
-        showError(makeError(AppErrorCode::Unexpected, {.detail = error.what()}));
+        showError(makeError(ErrorCode::Unexpected, {.detail = error.what()}));
     }
 }
 

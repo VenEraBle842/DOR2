@@ -7,7 +7,6 @@
 #include <cstdint>
 #include <expected>
 #include <filesystem>
-#include <optional>
 #include <string>
 
 struct BenchmarkResult {
@@ -22,35 +21,24 @@ struct BenchmarkResult {
     bool verified{false};
 };
 
-struct BenchmarkFailure {
-    BenchmarkError code;
-    std::string message;
-    std::optional<FileFailure> fileFailure;
-};
-
-inline AppError makeError(const BenchmarkFailure& failure) {
-    if (failure.fileFailure) return makeError(*failure.fileFailure);
-    return makeError(failure.code, {.detail = failure.message});
-}
-
 class BenchmarkRunner {
 public:
     static constexpr std::size_t maxDatasetSize = 10'000;
     static constexpr std::size_t maxQueryCount = 10'000;
     static constexpr std::size_t maxWorkload = 10'000'000;
 
-    static std::expected<DynamicArray<BenchmarkResult>, BenchmarkFailure> run(
+    static std::expected<DynamicArray<BenchmarkResult>, Error> run(
         std::size_t datasetSize,
         std::size_t queryCount,
         std::uint64_t seed
     );
 
-    static std::expected<void, FileFailure> saveCsv(
+    static std::expected<void, Error> saveCsv(
         const std::filesystem::path& path,
         const DynamicArray<BenchmarkResult>& results
     );
 
-    static std::expected<DynamicArray<BenchmarkResult>, BenchmarkFailure> runAndSave(
+    static std::expected<DynamicArray<BenchmarkResult>, Error> runAndSave(
         const std::filesystem::path& path,
         std::size_t datasetSize,
         std::size_t queryCount,

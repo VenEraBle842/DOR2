@@ -15,10 +15,10 @@ public:
     bool OnExceptionInMainLoop() override {
         try { throw; }
         catch (const std::exception& error) {
-            wxMessageBox(wxString::FromUTF8(formatError(makeError(AppErrorCode::Unexpected,
+            wxMessageBox(wxString::FromUTF8(formatError(makeError(ErrorCode::Unexpected,
                 {.detail = error.what()}))), "Operation failed", wxOK | wxICON_ERROR);
         } catch (...) {
-            wxMessageBox(wxString::FromUTF8(formatError(makeError(AppErrorCode::Unexpected))),
+            wxMessageBox(wxString::FromUTF8(formatError(makeError(ErrorCode::Unexpected))),
                          "Operation failed", wxOK | wxICON_ERROR);
         }
         return true;

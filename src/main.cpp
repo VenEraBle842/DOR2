@@ -9,7 +9,7 @@
 #include <optional>
 #include <string>
 
-void printError(const AppError& error) {
+void printError(const Error& error) {
     std::cout << formatError(error) << '\n';
 }
 
@@ -48,7 +48,7 @@ std::optional<ExactSearchStrategy> readSearchStrategy() {
     if (*choice == 1) return ExactSearchStrategy::Linear;
     if (*choice == 2) return ExactSearchStrategy::Tree;
     if (*choice == 3) return ExactSearchStrategy::Binary;
-    printError(makeError(AppErrorCode::UnknownSelection, {.field = "Algorithm"}));
+    printError(makeError(ErrorCode::UnknownSelection, {.field = "Algorithm"}));
     return std::nullopt;
 }
 
@@ -57,7 +57,7 @@ std::optional<RangeSearchStrategy> readRangeStrategy() {
     if (!choice) return std::nullopt;
     if (*choice == 1) return RangeSearchStrategy::Linear;
     if (*choice == 2) return RangeSearchStrategy::Binary;
-    printError(makeError(AppErrorCode::UnknownSelection, {.field = "Algorithm"}));
+    printError(makeError(ErrorCode::UnknownSelection, {.field = "Algorithm"}));
     return std::nullopt;
 }
 
@@ -68,7 +68,7 @@ void printStudent(const Student& student) {
 
 void printSearchResults(
     const StudentSearchService& service,
-    const std::expected<DynamicArray<RecordId>, AppError>& result
+    const std::expected<DynamicArray<RecordId>, Error>& result
 ) {
     if (!result) {
         printError(result.error());
@@ -134,7 +134,7 @@ void saveStudents(const StudentApplication& app) {
 void showIndexStatistics(const StudentSearchService& service) {
     const auto statistics = service.getIndexStatistics();
     if (!statistics) {
-        printError(makeError(statistics.error()));
+        printError(statistics.error());
         return;
     }
     std::cout << "Records=" << statistics->recordCount
@@ -150,7 +150,7 @@ void handleExactSearch(const StudentApplication& app) {
     const auto strategy = readSearchStrategy();
     if (!strategy) return;
     if (*attribute < 1 || *attribute > 4) {
-        printError(makeError(AppErrorCode::UnknownSelection, {.field = "Attribute"}));
+        printError(makeError(ErrorCode::UnknownSelection, {.field = "Attribute"}));
         return;
     }
     const auto value = readText("Value: ");
@@ -168,7 +168,7 @@ void handleRangeSearch(const StudentApplication& app) {
     const auto strategy = readRangeStrategy();
     if (!strategy) return;
     if (*attribute != 1 && *attribute != 2) {
-        printError(makeError(AppErrorCode::UnknownSelection, {.field = "Attribute"}));
+        printError(makeError(ErrorCode::UnknownSelection, {.field = "Attribute"}));
         return;
     }
     const auto lower = readText("Lower bound: ");
@@ -197,7 +197,7 @@ void handleCompositeSearch(const StudentApplication& app) {
     const auto mode = readNumber<int>("Search: 1 - exact, 2 - range\n> ");
     if (!mode) return;
     if (*mode != 1 && *mode != 2) {
-        printError(makeError(AppErrorCode::UnknownSelection, {.field = "Search mode"}));
+        printError(makeError(ErrorCode::UnknownSelection, {.field = "Search mode"}));
         return;
     }
     SearchRequest request;
@@ -246,7 +246,7 @@ void runBenchmark(StudentApplication& app) {
 
 void exportBenchmark(const StudentApplication& app) {
     if (app.getLatestResults().empty()) {
-        printError(makeError(AppErrorCode::NoBenchmarkResults));
+        printError(makeError(ErrorCode::NoBenchmarkResults));
         return;
     }
     const auto path = readText("CSV output file: ");
@@ -300,12 +300,12 @@ int main() {
                 case 10: handleCompositeSearch(app); break;
                 case 11: runBenchmark(app); break;
                 case 12: exportBenchmark(app); break;
-                default: printError(makeError(AppErrorCode::UnknownSelection, {.field = "Menu"})); break;
+                default: printError(makeError(ErrorCode::UnknownSelection, {.field = "Menu"})); break;
             }
         } catch (const std::exception& error) {
-            printError(makeError(AppErrorCode::Unexpected, {.detail = error.what()}));
+            printError(makeError(ErrorCode::Unexpected, {.detail = error.what()}));
         } catch (...) {
-            printError(makeError(AppErrorCode::Unexpected));
+            printError(makeError(ErrorCode::Unexpected));
         }
     }
     std::cout << "Program finished\n";
