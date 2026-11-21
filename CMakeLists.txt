@@ -28,6 +28,7 @@ add_library(dor2_core
     src/student_file_storage.cpp
     src/student_application.cpp
     src/search_request.cpp
+    src/student_attributes.cpp
 )
 target_compile_features(dor2_core PUBLIC cxx_std_23)
 target_include_directories(dor2_core PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/include")

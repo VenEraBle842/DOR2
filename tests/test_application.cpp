@@ -2,6 +2,7 @@
 
 #include "application/student_application.hpp"
 #include "common/number_input.hpp"
+#include "common/two_element.hpp"
 #include "storage/student_file_storage.hpp"
 
 #include <chrono>
@@ -102,8 +103,8 @@ TEST_F(ApplicationTest, GenerationIsReproducibleBoundedAndSupportsEmptyData) {
 TEST_F(ApplicationTest, ExactRequestsAgreeForEveryAttributeAndStrategy) {
     populate();
     ASSERT_TRUE(app_.buildIndexes());
-    const SearchKeyInput keys[] = {{"8", {}, {}}, {"Smith", {}, {}}, {"2003", {}, {}},
-                                    {"4.5", {}, {}}, {"Smith", "Anna", "2003"}};
+    const SearchKeyInput keys[] = {{"8"}, {"Smith"}, {"2003"},
+                                    {"4.5"}, {"Smith", "Anna", "2003"}};
     const std::size_t counts[] = {1, 3, 2, 2, 2};
     for (int attribute = 0; attribute < 5; ++attribute) {
         SearchRequest request;
@@ -140,21 +141,21 @@ TEST_F(ApplicationTest, RangeRequestsIncludeBoundsAndKeepKeyThenIdOrder) {
         EXPECT_EQ((*result)[2], 5U);
     }
     request.attribute = SearchAttribute::Gpa;
-    request.lower.value = "4.1";
-    request.upper.value = "4.5";
+    request.lower = {"4.1"};
+    request.upper = {"4.5"};
     ASSERT_EQ(app_.search(request)->size(), 3U);
     request.attribute = SearchAttribute::BirthYear;
-    request.lower.value = "2003";
-    request.upper.value = "2004";
+    request.lower = {"2003"};
+    request.upper = {"2004"};
     ASSERT_EQ(app_.search(request)->size(), 3U);
-    request.upper.value = "2001";
+    request.upper = {"2001"};
     EXPECT_EQ(app_.search(request).error().code, ErrorCode::InvalidRange);
 }
 
 TEST_F(ApplicationTest, IndexStatesInputErrorsAndEmptyMatchesRemainDistinct) {
     populate();
     SearchRequest request;
-    request.lower.value = "8";
+    request.lower = {"8"};
     request.exactStrategy = ExactSearchStrategy::Tree;
     EXPECT_EQ(app_.search(request).error().code, ErrorCode::IndexNotBuilt);
     ASSERT_TRUE(app_.buildIndexes());
@@ -162,10 +163,10 @@ TEST_F(ApplicationTest, IndexStatesInputErrorsAndEmptyMatchesRemainDistinct) {
     EXPECT_EQ(app_.search(request).error().code, ErrorCode::IndexStale);
     request.exactStrategy = ExactSearchStrategy::Linear;
     ASSERT_EQ(app_.search(request)->size(), 1U);
-    request.lower.value = "999";
+    request.lower = {"999"};
     ASSERT_TRUE(app_.search(request));
     EXPECT_TRUE(app_.search(request)->empty());
-    request.lower.value = "-1";
+    request.lower = {"-1"};
     EXPECT_EQ(app_.search(request).error().code, ErrorCode::NegativeNumber);
 }
 
@@ -190,7 +191,13 @@ TEST_F(ApplicationTest, SuccessfulLoadRebuildsIndexesAndRoundTripsUnicode) {
     ASSERT_TRUE(app_.generateStudents(2, 100));
     ASSERT_TRUE(app_.loadStudents(path));
     EXPECT_EQ(app_.getSearchService().getRepository().getCount(), 4U);
-    EXPECT_TRUE(app_.getSearchService().getIndexStatistics());
+    const auto statistics = app_.getSearchService().getIndexStatistics();
+    EXPECT_EQ(statistics.recordCount, 4U);
+    EXPECT_FALSE(statistics.indexes.empty());
+    for (const auto& state : statistics.indexes) {
+        EXPECT_TRUE(state.built);
+        EXPECT_FALSE(state.stale);
+    }
     EXPECT_EQ(app_.getSearchService().getRepository().findById(1)->firstName, "Иван");
     EXPECT_EQ(app_.saveStudents(directory_ / "missing" / "file.txt").error().code, ErrorCode::FileOpen);
 }
@@ -217,12 +224,15 @@ TEST_F(ApplicationTest, ComparisonUsesSeparateDataKeepsLastSuccessAndExportsCsv)
 }
 
 TEST_F(ApplicationTest, RegisteredHandlerAndExtractorExtendSearchWithoutChangingDispatcher) {
-    const StudentAttribute<int> length{static_cast<SearchAttribute>(99), "First name length",
-        [](const Student& student) { return static_cast<int>(student.firstName.size()); }};
+    const StudentAttribute<int> length{
+        static_cast<SearchAttribute>(99), "First name length",
+        [](const Student& student) { return static_cast<int>(student.firstName.size()); },
+        {"Length"},
+        [](const SearchKeyInput& input) { return parseNumber<int>(input.at(0), "Length"); },
+        true
+    };
     SearchRequestHandlers handlers;
-    handlers.registerAttribute(length, [](const SearchKeyInput& input) {
-        return parseNumber<int>(input.value, "Length");
-    }, true);
+    handlers.registerAttribute(length);
     StudentSearchService service;
     ASSERT_TRUE(service.addStudent({1, "Anna", "Smith", 2000, 4.0}));
     ASSERT_TRUE(service.addStudent({2, "Bob", "Smith", 2000, 4.0}));
@@ -230,7 +240,7 @@ TEST_F(ApplicationTest, RegisteredHandlerAndExtractorExtendSearchWithoutChanging
     ASSERT_TRUE(service.buildIndexes({{length.id, IndexBackend::SortedArray}}));
     SearchRequest request;
     request.attribute = length.id;
-    request.lower.value = "4";
+    request.lower = {"4"};
     for (auto strategy : {ExactSearchStrategy::Linear, ExactSearchStrategy::Binary}) {
         request.exactStrategy = strategy;
         const auto result = executeSearch(service, request, handlers);
@@ -239,8 +249,8 @@ TEST_F(ApplicationTest, RegisteredHandlerAndExtractorExtendSearchWithoutChanging
         EXPECT_EQ((*result)[0].recordId, 1U);
     }
     request.range = true;
-    request.lower.value = "3";
-    request.upper.value = "4";
+    request.lower = {"3"};
+    request.upper = {"4"};
     request.rangeStrategy = RangeSearchStrategy::Binary;
     const auto result = executeSearch(service, request, handlers);
     ASSERT_TRUE(result);
@@ -264,4 +274,101 @@ TEST_F(ApplicationTest, LoadingReplacesPartialIndexesAndBuildsNewSnapshot) {
         EXPECT_TRUE(state.built);
         EXPECT_FALSE(state.stale);
     }
+}
+
+TEST_F(ApplicationTest, IncorrectFieldCountsReturnExpectedErrors) {
+    populate();
+    SearchRequest request;
+    request.attribute = SearchAttribute::Id;
+    EXPECT_EQ(app_.search(request).error().code, ErrorCode::InvalidSearchKey);
+    request.lower = {"8", "extra"};
+    EXPECT_EQ(app_.search(request).error().code, ErrorCode::InvalidSearchKey);
+    request.range = true;
+    EXPECT_EQ(app_.search(request).error().code, ErrorCode::UnknownSelection);
+
+    request.attribute = SearchAttribute::BirthYear;
+    request.lower = {"2000"};
+    request.upper = {};
+    EXPECT_EQ(app_.search(request).error().code, ErrorCode::InvalidSearchKey);
+    request.upper = {"2004", "extra"};
+    EXPECT_EQ(app_.search(request).error().code, ErrorCode::InvalidSearchKey);
+    request.upper = {"2004"};
+    ASSERT_TRUE(app_.search(request));
+
+    request.range = false;
+    request.attribute = SearchAttribute::CompositeKey;
+    request.lower = {"Smith", "Anna"};
+    EXPECT_EQ(app_.search(request).error().code, ErrorCode::InvalidSearchKey);
+    request.lower = {"Smith", "Anna", "invalid year"};
+    EXPECT_EQ(app_.search(request).error().code, ErrorCode::InvalidNumber);
+}
+
+namespace {
+
+using FourFieldKey = TwoElement<StudentCompositeKey, double>;
+
+struct FourFieldCompare {
+    bool operator()(const FourFieldKey& left, const FourFieldKey& right) const {
+        const StudentCompositeKeyCompare compare;
+        if (compare(left.first, right.first)) return true;
+        if (compare(right.first, left.first)) return false;
+        return left.second < right.second;
+    }
+};
+
+} // namespace
+
+TEST(SearchDescriptionTest, CustomFourFieldDescriptionControlsParsingAndRangeAvailability) {
+    const StudentAttribute<FourFieldKey, FourFieldCompare> attribute{
+        static_cast<SearchAttribute>(99), "Student identity and grade",
+        [](const Student& student) {
+            return FourFieldKey{{student.lastName, student.firstName, student.birthYear}, student.gpa};
+        },
+        {"Surname", "Given name", "Year", "Grade"},
+        [](const SearchKeyInput& fields) -> std::expected<FourFieldKey, Error> {
+            const auto year = parseNumber<int>(fields.at(2), "Year");
+            if (!year) return std::unexpected(year.error());
+            const auto grade = parseNumber<double>(fields.at(3), "Grade");
+            if (!grade) return std::unexpected(grade.error());
+            return FourFieldKey{{fields.at(0), fields.at(1), *year}, *grade};
+        },
+        true, "The grade follows the identity fields."
+    };
+    SearchRequestHandlers handlers;
+    handlers.registerAttribute(attribute);
+    const auto choices = handlers.getAttributes();
+    ASSERT_EQ(choices.size(), 1U);
+    EXPECT_EQ(choices[0].id, attribute.id);
+    EXPECT_EQ(choices[0].name, attribute.name);
+    ASSERT_EQ(choices[0].fieldNames.size(), 4U);
+    EXPECT_EQ(choices[0].fieldNames[3], "Grade");
+    EXPECT_EQ(choices[0].hint, attribute.hint);
+    ASSERT_EQ(handlers.getAttributes(true).size(), 1U);
+
+    StudentSearchService service;
+    ASSERT_TRUE(service.addStudent({7, "Anna", "Smith", 2003, 4.5}));
+    service.registerIndex(attribute, IndexBackend::SortedArray);
+    ASSERT_TRUE(service.buildIndexes({{attribute.id, IndexBackend::SortedArray}}));
+    SearchRequest request;
+    request.attribute = attribute.id;
+    request.lower = {"Smith", "Anna", "2003", "4.5"};
+    for (const auto strategy : {ExactSearchStrategy::Linear, ExactSearchStrategy::Binary}) {
+        request.exactStrategy = strategy;
+        const auto matches = executeSearch(service, request, handlers);
+        ASSERT_TRUE(matches);
+        ASSERT_EQ(matches->size(), 1U);
+        EXPECT_EQ((*matches)[0].recordId, 7U);
+    }
+    request.range = true;
+    request.rangeStrategy = RangeSearchStrategy::Binary;
+    request.upper = request.lower;
+    EXPECT_EQ(executeSearch(service, request, handlers)->size(), 1U);
+    request.upper.pop_back();
+    EXPECT_EQ(executeSearch(service, request, handlers).error().code, ErrorCode::InvalidSearchKey);
+
+    auto exactOnly = attribute;
+    exactOnly.supportsRange = false;
+    handlers.registerAttribute(exactOnly);
+    EXPECT_TRUE(handlers.getAttributes(true).empty());
+    EXPECT_EQ(executeSearch(service, request, handlers).error().code, ErrorCode::UnknownSelection);
 }

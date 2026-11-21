@@ -161,7 +161,12 @@ TEST(StudentIndexCatalogTest, RejectsAnotherRepositoryWithSameSizeAndNumberOfCha
     EXPECT_EQ(findPosition(catalog, unrelated, 20).error().code, ErrorCode::IndexStale);
     EXPECT_EQ(findExact(catalog, studentLastNameAttribute, IndexBackend::Tree, unrelated, "Smith").error().code, ErrorCode::IndexStale);
     EXPECT_EQ(findExact(catalog, studentLastNameAttribute, IndexBackend::SortedArray, unrelated, "Smith").error().code, ErrorCode::IndexStale);
-    EXPECT_EQ(catalog.getStatistics(unrelated).error().code, ErrorCode::IndexStale);
+    const auto statistics = catalog.getStatistics(unrelated);
+    EXPECT_EQ(statistics.recordCount, unrelated.getCount());
+    for (const auto& state : statistics.indexes) {
+        EXPECT_TRUE(state.built);
+        EXPECT_TRUE(state.stale);
+    }
     EXPECT_EQ(findRange(catalog, studentBirthYearAttribute, unrelated, 2002, 2004).error().code, ErrorCode::IndexStale);
     EXPECT_EQ(findRange(catalog, studentGpaAttribute, unrelated, 4.0, 5.0).error().code, ErrorCode::IndexStale);
     EXPECT_EQ(findRange(catalog, studentCompositeAttribute,
@@ -408,4 +413,43 @@ TEST(StudentIndexCatalogTest, TypedLookupRejectsMismatchedKeyTypes) {
     EXPECT_FALSE(catalog.getIndex<std::string>(selected));
     EXPECT_FALSE(catalog.getIndex<double>(selected));
     EXPECT_FALSE(catalog.getIndex<int>({static_cast<SearchAttribute>(99), IndexBackend::Tree}));
+}
+
+TEST(StudentIndexCatalogTest, StatisticsIncludeUnbuiltStaleAndCustomIndexes) {
+    auto repository = makeRepository();
+    StudentIndexCatalog catalog;
+    const auto initial = catalog.getStatistics(repository);
+    EXPECT_EQ(initial.recordCount, repository.getCount());
+    for (const auto& state : initial.indexes) {
+        EXPECT_FALSE(state.built);
+        EXPECT_FALSE(state.stale);
+        EXPECT_EQ(state.keyCount, 0U);
+    }
+
+    const StudentAttribute<int> nameLength{
+        static_cast<SearchAttribute>(99), "First name length",
+        [](const Student& student) { return static_cast<int>(student.firstName.size()); }
+    };
+    const IndexSelection selected{nameLength.id, IndexBackend::SortedArray};
+    catalog.registerIndex(nameLength, selected.backend);
+    ASSERT_TRUE(catalog.build(repository, {selected}));
+    const auto built = catalog.getStatistics(repository);
+    ASSERT_EQ(built.indexes.size(), initial.indexes.size() + 1);
+    for (const auto& state : built.indexes) {
+        if (state.selection == selected) {
+            EXPECT_TRUE(state.built);
+            EXPECT_FALSE(state.stale);
+            EXPECT_EQ(state.keyCount, 1U);
+            EXPECT_EQ(state.name, nameLength.name);
+        } else {
+            EXPECT_FALSE(state.built);
+        }
+    }
+
+    ASSERT_TRUE(repository.add({50, "N", "New", 2005, 4.0}));
+    const auto stale = catalog.getStatistics(repository);
+    EXPECT_EQ(stale.recordCount, repository.getCount());
+    for (const auto& state : stale.indexes) {
+        EXPECT_EQ(state.stale, state.selection == selected);
+    }
 }

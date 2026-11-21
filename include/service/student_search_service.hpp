@@ -103,7 +103,7 @@ public:
         return indexes_.build(repository_, selections);
     }
 
-    std::expected<StudentIndexStatistics, Error> getIndexStatistics() const {
+    StudentIndexStatistics getIndexStatistics() const {
         return indexes_.getStatistics(repository_);
     }
 

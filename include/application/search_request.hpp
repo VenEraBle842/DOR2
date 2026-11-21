@@ -3,13 +3,7 @@
 #include "service/student_search_service.hpp"
 
 #include <functional>
-#include <utility>
-
-struct SearchKeyInput {
-    std::string value{};
-    std::string firstName{};
-    std::string birthYear{};
-};
+#include <stdexcept>
 
 struct SearchRequest {
     SearchAttribute attribute{SearchAttribute::Id};
@@ -23,22 +17,17 @@ struct SearchRequest {
 template <typename Key, typename Compare>
 struct AttributeSearchHandler {
     StudentAttribute<Key, Compare> attribute;
-    std::function<std::expected<Key, Error>(const SearchKeyInput&)> parseKey;
-    bool supportsRange{false};
 
     std::expected<StudentRecordReferences, Error> operator()(
         const StudentSearchService& service,
         const SearchRequest& request
     ) const {
-        if (request.range && !supportsRange) {
-            return std::unexpected(makeError(ErrorCode::UnknownSelection, {.field = "Range attribute"}));
-        }
-        const auto lower = parseKey(request.lower);
+        const auto lower = attribute.parseKey(request.lower);
         if (!lower) return std::unexpected(lower.error());
         if (!request.range) {
             return service.findExact(attribute, *lower, request.exactStrategy);
         }
-        const auto upper = parseKey(request.upper);
+        const auto upper = attribute.parseKey(request.upper);
         if (!upper) return std::unexpected(upper.error());
         return service.findRange(attribute, *lower, *upper, request.rangeStrategy);
     }
@@ -51,24 +40,25 @@ public:
 
 private:
     struct Registration {
-        SearchAttribute attribute{SearchAttribute::Id};
+        SearchAttributeDescription description;
         Handler handler;
     };
 
     DynamicArray<Registration> handlers_;
 
 public:
-    void registerHandler(SearchAttribute attribute, Handler handler);
+    void registerHandler(SearchAttributeDescription description, Handler handler);
 
-    template <typename Key, typename Compare, typename Parser>
-    void registerAttribute(
-        const StudentAttribute<Key, Compare>& attribute,
-        Parser parser,
-        bool supportsRange
-    ) {
-        const AttributeSearchHandler<Key, Compare> handler{attribute, std::move(parser), supportsRange};
-        registerHandler(attribute.id, handler);
+    template <typename Key, typename Compare>
+    void registerAttribute(const StudentAttribute<Key, Compare>& attribute) {
+        if (!attribute.parseKey) {
+            throw std::invalid_argument("A search attribute requires a key parser");
+        }
+        const AttributeSearchHandler<Key, Compare> handler{attribute};
+        registerHandler(attribute.getDescription(), handler);
     }
+
+    DynamicArray<SearchAttributeDescription> getAttributes(bool range = false) const;
 
     std::expected<StudentRecordReferences, Error> execute(
         const StudentSearchService& service,

@@ -59,10 +59,9 @@ wxButton* button(wxWindow* parent, wxSizer* sizer, const wxString& label,
 }
 
 wxTextCtrl* input(wxWindow* parent, wxSizer* sizer, const wxString& label,
-                  const wxString& value, const wxString& name, wxStaticText** labelControl = nullptr) {
+                  const wxString& value, const wxString& name) {
     auto group = std::make_unique<wxBoxSizer>(wxVERTICAL);
     auto* caption = new wxStaticText(parent, wxID_ANY, label);
-    if (labelControl) *labelControl = caption;
     group->Add(caption, 0, wxBOTTOM, 4);
     auto* field = new wxTextCtrl(parent, wxID_ANY, value);
     field->SetName(name);
@@ -248,15 +247,9 @@ wxPanel* MainFrame::createSearchPage() {
     layout->Add(lowerLabel_, 0, wxLEFT | wxRIGHT, 12);
     auto lowerFields = std::make_unique<wxBoxSizer>(wxHORIZONTAL);
     lowerFields_ = lowerFields.get();
-    lowerValue_ = input(page, lowerFields_, "ID", "", "search-lower", &lowerValueLabel_);
-    lowerFirstName_ = input(page, lowerFields_, "First name", "", "search-lower-first-name");
-    lowerYear_ = input(page, lowerFields_, "Birth year", "2003", "search-lower-year");
     attachSizer(*layout, lowerFields, 0, wxEXPAND | wxALL, 12);
     auto upperFields = std::make_unique<wxBoxSizer>(wxHORIZONTAL);
     upperFields_ = upperFields.get();
-    upperValue_ = input(page, upperFields_, "ID (upper bound)", "", "search-upper", &upperValueLabel_);
-    upperFirstName_ = input(page, upperFields_, "First name", "", "search-upper-first-name");
-    upperYear_ = input(page, upperFields_, "Birth year", "2004", "search-upper-year");
     attachSizer(*layout, upperFields, 0, wxEXPAND | wxLEFT | wxRIGHT | wxBOTTOM, 12);
     searchHint_ = new wxStaticText(page, wxID_ANY, "");
     layout->Add(searchHint_, 0, wxEXPAND | wxLEFT | wxRIGHT | wxBOTTOM, 12);
@@ -278,35 +271,43 @@ wxPanel* MainFrame::createSearchPage() {
 void MainFrame::configureSearch(bool resetChoices) {
     const bool range = searchMode_->GetSelection() == 1;
     if (resetChoices) {
+        searchAttributes_ = defaultSearchHandlers().getAttributes(range);
         searchAttribute_->Clear();
-        if (!range) {
-            searchAttribute_->Append("ID");
-            searchAttribute_->Append("Last name");
+        for (const auto& attribute : searchAttributes_) {
+            searchAttribute_->Append(ui(attribute.name));
         }
-        searchAttribute_->Append("Birth year");
-        searchAttribute_->Append("GPA");
-        searchAttribute_->Append("Composite key");
-        searchAttribute_->SetSelection(0);
+        if (!searchAttributes_.empty()) searchAttribute_->SetSelection(0);
         searchStrategy_->Clear();
         searchStrategy_->Append("Linear");
         if (!range) searchStrategy_->Append("Tree");
         searchStrategy_->Append("Binary");
         searchStrategy_->SetSelection(0);
     }
-    const wxString attribute = searchAttribute_->GetStringSelection();
-    const bool composite = attribute == "Composite key";
-    const wxString valueLabel = composite ? wxString("Last name") : attribute;
-    lowerValueLabel_->SetLabel(valueLabel);
-    upperValueLabel_->SetLabel(valueLabel + " (upper bound)");
+    lowerInputs_.clear();
+    upperInputs_.clear();
+    lowerFields_->Clear(true);
+    upperFields_->Clear(true);
     lowerLabel_->SetLabel(range ? "Lower bound (inclusive)" : "Exact value");
+
+    const int selection = searchAttribute_->GetSelection();
+    if (selection == wxNOT_FOUND) {
+        searchHint_->SetLabel("No attributes are available for this search mode.");
+        searchPanel_->Layout();
+        return;
+    }
+    const auto& attribute = searchAttributes_.at(static_cast<std::size_t>(selection));
+    for (std::size_t index = 0; index < attribute.fieldNames.size(); ++index) {
+        const auto& name = attribute.fieldNames[index];
+        lowerInputs_.push_back(input(searchPanel_, lowerFields_, ui(name), "",
+            ui("search-lower-" + std::to_string(index))));
+        upperInputs_.push_back(input(searchPanel_, upperFields_, ui(name + " (upper bound)"), "",
+            ui("search-upper-" + std::to_string(index))));
+    }
     searchPanel_->GetSizer()->Show(upperFields_, range);
-    lowerFields_->Show(std::size_t{1}, composite);
-    lowerFields_->Show(std::size_t{2}, composite);
-    upperFields_->Show(std::size_t{1}, range && composite);
-    upperFields_->Show(std::size_t{2}, range && composite);
-    searchHint_->SetLabel(composite ?
-        "Composite keys are compared by last name, then first name, then birth year. Both bounds are inclusive." :
-        "Use a dot for decimals. Indexed strategies require current indexes. Range bounds are inclusive.");
+    const std::string commonHint = "Use a dot for decimals. Indexed strategies require current indexes.";
+    std::string hint = attribute.hint.empty() ? commonHint : attribute.hint + " " + commonHint;
+    if (range) hint += " Both bounds are inclusive.";
+    searchHint_->SetLabel(ui(hint));
     searchPanel_->Layout();
 }
 
@@ -327,7 +328,10 @@ wxPanel* MainFrame::createIndexesPage() {
             application_.getSearchService().getRepository())) {
         const auto label = state.name + (state.selection.backend == IndexBackend::Tree ? " / Tree" : " / Sorted array");
         const auto item = indexSelection_->Append(ui(label));
-        indexSelection_->Check(item);
+        if (item == wxNOT_FOUND) {
+            throw std::runtime_error("Cannot add an index to the selection list");
+        }
+        indexSelection_->Check(static_cast<unsigned int>(item));
     }
     layout->Add(indexSelection_, 0, wxEXPAND | wxLEFT | wxRIGHT | wxBOTTOM, 12);
     statistics_ = new wxListCtrl(page, wxID_ANY, wxDefaultPosition, wxDefaultSize, wxLC_REPORT | wxLC_HRULES);
@@ -453,15 +457,23 @@ void MainFrame::search() {
     if (busy_) return;
     SearchRequest request;
     request.range = searchMode_->GetSelection() == 1;
-    const SearchAttribute exactAttributes[] = {SearchAttribute::Id, SearchAttribute::LastName,
-        SearchAttribute::BirthYear, SearchAttribute::Gpa, SearchAttribute::CompositeKey};
-    const SearchAttribute rangeAttributes[] = {SearchAttribute::BirthYear, SearchAttribute::Gpa, SearchAttribute::CompositeKey};
-    request.attribute = request.range ? rangeAttributes[searchAttribute_->GetSelection()] :
-                                        exactAttributes[searchAttribute_->GetSelection()];
+    const int selection = searchAttribute_->GetSelection();
+    if (selection == wxNOT_FOUND) {
+        showError(makeError(ErrorCode::UnknownSelection, {.field = "Search attribute"}));
+        return;
+    }
+    request.attribute = searchAttributes_.at(static_cast<std::size_t>(selection)).id;
     request.exactStrategy = static_cast<ExactSearchStrategy>(searchStrategy_->GetSelection());
-    request.rangeStrategy = searchStrategy_->GetSelection() == 0 ? RangeSearchStrategy::Linear : RangeSearchStrategy::Binary;
-    request.lower = {text(lowerValue_), text(lowerFirstName_), text(lowerYear_)};
-    request.upper = {text(upperValue_), text(upperFirstName_), text(upperYear_)};
+    request.rangeStrategy = searchStrategy_->GetSelection() == 0
+        ? RangeSearchStrategy::Linear : RangeSearchStrategy::Binary;
+    for (const auto* field : lowerInputs_) {
+        request.lower.push_back(text(field));
+    }
+    if (request.range) {
+        for (const auto* field : upperInputs_) {
+            request.upper.push_back(text(field));
+        }
+    }
     matches_->setRows({});
     matchCount_->SetLabel("Searching...");
     runTask("Search complete", [request](StudentApplication& app, TaskOutcome& outcome) -> std::expected<void, Error> {
@@ -508,7 +520,7 @@ MainFrame::Snapshot MainFrame::takeSnapshot(const StudentApplication& app) {
     result.students = DynamicArray<Student>(repository.getCount());
     for (std::size_t i = 0; i < repository.getCount(); ++i) result.students.push_back(repository.at(i));
     for (const auto& row : app.getLatestResults()) result.benchmark.push_back(row);
-    result.indexes = service.getIndexes().getStates(repository);
+    result.indexes = service.getIndexStatistics().indexes;
     std::size_t ready = 0;
     for (const auto& state : result.indexes) {
         if (state.built && !state.stale) ++ready;

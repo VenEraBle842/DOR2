@@ -21,3 +21,4 @@ DOR2_ERROR(InvalidWorkload, "The benchmark workload is too large.", "Each count 
 DOR2_ERROR(BenchmarkPreparation, "Cannot prepare the benchmark.", "Check the technical details and retry with a smaller dataset.")
 DOR2_ERROR(NoBenchmarkResults, "No comparison results to export.", "Run a comparison first.")
 DOR2_ERROR(Unexpected, "The operation could not be completed.", "Check the technical details before retrying.")
+DOR2_ERROR(InvalidSearchKey, "The search key has an incorrect number of fields.", "Fill all fields for the selected attribute.")

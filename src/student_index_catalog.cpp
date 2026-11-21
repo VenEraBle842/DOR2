@@ -112,24 +112,6 @@ bool StudentIndexCatalog::isStale(const StudentRepository& repository) const noe
     return false;
 }
 
-std::size_t StudentIndexCatalog::getTreeKeyCount(SearchAttribute attribute) const {
-    const auto index = getIndex({attribute, IndexBackend::Tree});
-    return index ? index->getKeyCount() : 0;
-}
-
-std::expected<StudentIndexStatistics, Error> StudentIndexCatalog::getStatistics(
-    const StudentRepository& repository
-) const {
-    if (indexes_.empty()) return std::unexpected(makeError(ErrorCode::IndexNotBuilt));
-    for (const auto& entry : indexes_) {
-        if (!entry.index->isBuilt()) return std::unexpected(makeError(ErrorCode::IndexNotBuilt));
-        if (entry.index->isStale(repository)) return std::unexpected(makeError(ErrorCode::IndexStale));
-    }
-    return StudentIndexStatistics{
-        repository.getCount(),
-        getTreeKeyCount(SearchAttribute::LastName),
-        getTreeKeyCount(SearchAttribute::BirthYear),
-        getTreeKeyCount(SearchAttribute::Gpa),
-        getTreeKeyCount(SearchAttribute::CompositeKey)
-    };
+StudentIndexStatistics StudentIndexCatalog::getStatistics(const StudentRepository& repository) const {
+    return {repository.getCount(), getStates(repository)};
 }

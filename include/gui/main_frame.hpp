@@ -68,14 +68,9 @@ class MainFrame : public wxFrame {
     wxChoice* searchStrategy_{};
     wxStaticText* searchHint_{};
     wxStaticText* lowerLabel_{};
-    wxStaticText* lowerValueLabel_{};
-    wxStaticText* upperValueLabel_{};
-    wxTextCtrl* lowerValue_{};
-    wxTextCtrl* lowerFirstName_{};
-    wxTextCtrl* lowerYear_{};
-    wxTextCtrl* upperValue_{};
-    wxTextCtrl* upperFirstName_{};
-    wxTextCtrl* upperYear_{};
+    DynamicArray<SearchAttributeDescription> searchAttributes_;
+    DynamicArray<wxTextCtrl*> lowerInputs_;
+    DynamicArray<wxTextCtrl*> upperInputs_;
     wxBoxSizer* lowerFields_{};
     wxBoxSizer* upperFields_{};
     wxPanel* searchPanel_{};

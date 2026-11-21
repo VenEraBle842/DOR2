@@ -5,20 +5,17 @@
 #include "index/student_attributes.hpp"
 #include "index/student_index.hpp"
 
-struct StudentIndexStatistics {
-    std::size_t recordCount{0};
-    std::size_t lastNameKeyCount{0};
-    std::size_t birthYearKeyCount{0};
-    std::size_t gpaKeyCount{0};
-    std::size_t compositeKeyCount{0};
-};
-
 struct StudentIndexState {
     IndexSelection selection;
     std::string name;
     bool built{false};
     bool stale{false};
     std::size_t keyCount{0};
+};
+
+struct StudentIndexStatistics {
+    std::size_t recordCount{0};
+    DynamicArray<StudentIndexState> indexes;
 };
 
 class StudentIndexCatalog {
@@ -30,8 +27,6 @@ private:
     };
 
     DynamicArray<Registration> indexes_;
-
-    std::size_t getTreeKeyCount(SearchAttribute attribute) const;
 
 public:
     StudentIndexCatalog();
@@ -80,7 +75,7 @@ public:
     bool isBuilt() const noexcept;
     bool isStale(const StudentRepository& repository) const noexcept;
 
-    std::expected<StudentIndexStatistics, Error> getStatistics(
+    StudentIndexStatistics getStatistics(
         const StudentRepository& repository
     ) const;
 };

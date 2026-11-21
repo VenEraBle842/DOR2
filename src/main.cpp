@@ -134,9 +134,9 @@ void saveStudents(const StudentApplication& app) {
 }
 
 void showIndexStatistics(const StudentSearchService& service) {
-    const auto states = service.getIndexes().getStates(service.getRepository());
-    std::cout << "Records=" << service.getRepository().getCount() << '\n';
-    for (const auto& state : states) {
+    const auto statistics = service.getIndexStatistics();
+    std::cout << "Records=" << statistics.recordCount << '\n';
+    for (const auto& state : statistics.indexes) {
         std::cout << state.name << (state.selection.backend == IndexBackend::Tree ? " / Tree: " : " / Sorted array: ")
                   << (!state.built ? "not built" : state.stale ? "out of date" : "ready");
         if (state.built) std::cout << ", keys=" << state.keyCount;
@@ -189,53 +189,70 @@ void buildSelectedIndexes(StudentApplication& app) {
     std::cout << "Selected indexes built.\n";
 }
 
-void handleExactSearch(const StudentApplication& app) {
-    const auto attribute = readNumber<int>("Attribute: 1 - ID, 2 - last name, 3 - birth year, 4 - GPA\n> ");
-    if (!attribute) return;
-    const auto strategy = readSearchStrategy();
-    if (!strategy) return;
-    if (*attribute < 1 || *attribute > 4) {
-        printError(makeError(ErrorCode::UnknownSelection, {.field = "Attribute"}));
-        return;
+std::optional<SearchAttributeDescription> readSearchAttribute(bool range, bool multipleFieldsOnly) {
+    const auto attributes = defaultSearchHandlers().getAttributes(range);
+    DynamicArray<SearchAttributeDescription> choices;
+    for (const auto& attribute : attributes) {
+        if (!multipleFieldsOnly || attribute.fieldNames.size() > 1) {
+            choices.push_back(attribute);
+        }
     }
-    const auto value = readText("Value: ");
-    if (!value) return;
-    SearchRequest request;
-    request.attribute = static_cast<SearchAttribute>(*attribute - 1);
-    request.exactStrategy = *strategy;
-    request.lower.value = *value;
-    printSearchResults(app.getSearchService(), app.searchRecords(request));
+    if (choices.empty()) {
+        printError(makeError(ErrorCode::UnknownSelection, {.field = "Search attribute"}));
+        return std::nullopt;
+    }
+    if (multipleFieldsOnly && choices.size() == 1) return choices[0];
+
+    std::cout << "Attribute:\n";
+    for (std::size_t index = 0; index < choices.size(); ++index) {
+        std::cout << index + 1 << ". " << choices[index].name << '\n';
+    }
+    const auto choice = readBoundedSize("> ", choices.size());
+    if (!choice) return std::nullopt;
+    if (*choice == 0) {
+        printError(makeError(ErrorCode::UnknownSelection, {.field = "Search attribute"}));
+        return std::nullopt;
+    }
+    return choices[*choice - 1];
 }
 
-void handleRangeSearch(const StudentApplication& app) {
-    const auto attribute = readNumber<int>("Attribute: 1 - birth year, 2 - GPA\n> ");
-    if (!attribute) return;
-    const auto strategy = readRangeStrategy();
-    if (!strategy) return;
-    if (*attribute != 1 && *attribute != 2) {
-        printError(makeError(ErrorCode::UnknownSelection, {.field = "Attribute"}));
-        return;
+std::optional<SearchKeyInput> readSearchKey(const SearchAttributeDescription& attribute) {
+    SearchKeyInput result;
+    for (const auto& field : attribute.fieldNames) {
+        const auto value = readText(field + ": ");
+        if (!value) return std::nullopt;
+        result.push_back(*value);
     }
-    const auto lower = readText("Lower bound: ");
-    const auto upper = readText("Upper bound: ");
-    if (!lower || !upper) return;
-    SearchRequest request;
-    request.attribute = *attribute == 1 ? SearchAttribute::BirthYear : SearchAttribute::Gpa;
-    request.range = true;
-    request.rangeStrategy = *strategy;
-    request.lower.value = *lower;
-    request.upper.value = *upper;
-    printSearchResults(app.getSearchService(), app.searchRecords(request));
+    return result;
 }
 
-std::optional<SearchKeyInput> readCompositeKey() {
-    const auto lastName = readText("Last name: ");
-    if (!lastName) return std::nullopt;
-    const auto firstName = readText("First name: ");
-    if (!firstName) return std::nullopt;
-    const auto birthYear = readText("Birth year: ");
-    if (!birthYear) return std::nullopt;
-    return SearchKeyInput{*lastName, *firstName, *birthYear};
+void handleSearch(const StudentApplication& app, bool range, bool multipleFieldsOnly = false) {
+    const auto attribute = readSearchAttribute(range, multipleFieldsOnly);
+    if (!attribute) return;
+    SearchRequest request;
+    request.attribute = attribute->id;
+    request.range = range;
+    if (range) {
+        const auto strategy = readRangeStrategy();
+        if (!strategy) return;
+        request.rangeStrategy = *strategy;
+    } else {
+        const auto strategy = readSearchStrategy();
+        if (!strategy) return;
+        request.exactStrategy = *strategy;
+    }
+    if (!attribute->hint.empty()) std::cout << attribute->hint << '\n';
+    if (range) std::cout << "Lower key (inclusive):\n";
+    const auto lower = readSearchKey(*attribute);
+    if (!lower) return;
+    request.lower = *lower;
+    if (range) {
+        std::cout << "Upper key (inclusive):\n";
+        const auto upper = readSearchKey(*attribute);
+        if (!upper) return;
+        request.upper = *upper;
+    }
+    printSearchResults(app.getSearchService(), app.searchRecords(request));
 }
 
 void handleCompositeSearch(const StudentApplication& app) {
@@ -245,27 +262,7 @@ void handleCompositeSearch(const StudentApplication& app) {
         printError(makeError(ErrorCode::UnknownSelection, {.field = "Search mode"}));
         return;
     }
-    SearchRequest request;
-    request.attribute = SearchAttribute::CompositeKey;
-    request.range = *mode == 2;
-    if (request.range) std::cout << "Inclusive lexicographic range: last name, first name, birth year\nLower key:\n";
-    const auto lower = readCompositeKey();
-    if (!lower) return;
-    request.lower = *lower;
-    if (request.range) {
-        std::cout << "Upper key:\n";
-        const auto upper = readCompositeKey();
-        if (!upper) return;
-        request.upper = *upper;
-        const auto strategy = readRangeStrategy();
-        if (!strategy) return;
-        request.rangeStrategy = *strategy;
-    } else {
-        const auto strategy = readSearchStrategy();
-        if (!strategy) return;
-        request.exactStrategy = *strategy;
-    }
-    printSearchResults(app.getSearchService(), app.searchRecords(request));
+    handleSearch(app, *mode == 2, true);
 }
 
 void runBenchmark(StudentApplication& app) {
@@ -312,7 +309,7 @@ void printMenu() {
               << " 7. Show index statistics\n"
               << " 8. Exact search\n"
               << " 9. Range search\n"
-              << "10. Composite-key search\n"
+              << "10. Multi-field key search\n"
               << "11. Compare algorithms\n"
               << "12. Export latest comparison to CSV\n"
               << " 0. Exit\n";
@@ -337,8 +334,8 @@ int main() {
                 case 5: saveStudents(app); break;
                 case 6: buildSelectedIndexes(app); break;
                 case 7: showIndexStatistics(service); break;
-                case 8: handleExactSearch(app); break;
-                case 9: handleRangeSearch(app); break;
+                case 8: handleSearch(app, false); break;
+                case 9: handleSearch(app, true); break;
                 case 10: handleCompositeSearch(app); break;
                 case 11: runBenchmark(app); break;
                 case 12: exportBenchmark(app); break;
