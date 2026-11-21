@@ -215,3 +215,53 @@ TEST_F(ApplicationTest, ComparisonUsesSeparateDataKeepsLastSuccessAndExportsCsv)
     while (std::getline(file, line)) ++count;
     EXPECT_EQ(count, 21U);
 }
+
+TEST_F(ApplicationTest, RegisteredHandlerAndExtractorExtendSearchWithoutChangingDispatcher) {
+    const StudentAttribute<int> length{static_cast<SearchAttribute>(99), "First name length",
+        [](const Student& student) { return static_cast<int>(student.firstName.size()); }};
+    SearchRequestHandlers handlers;
+    handlers.registerAttribute(length, [](const SearchKeyInput& input) {
+        return parseNumber<int>(input.value, "Length");
+    }, true);
+    StudentSearchService service;
+    ASSERT_TRUE(service.addStudent({1, "Anna", "Smith", 2000, 4.0}));
+    ASSERT_TRUE(service.addStudent({2, "Bob", "Smith", 2000, 4.0}));
+    service.registerIndex(length, IndexBackend::SortedArray);
+    ASSERT_TRUE(service.buildIndexes({{length.id, IndexBackend::SortedArray}}));
+    SearchRequest request;
+    request.attribute = length.id;
+    request.lower.value = "4";
+    for (auto strategy : {ExactSearchStrategy::Linear, ExactSearchStrategy::Binary}) {
+        request.exactStrategy = strategy;
+        const auto result = executeSearch(service, request, handlers);
+        ASSERT_TRUE(result);
+        ASSERT_EQ(result->size(), 1U);
+        EXPECT_EQ((*result)[0].recordId, 1U);
+    }
+    request.range = true;
+    request.lower.value = "3";
+    request.upper.value = "4";
+    request.rangeStrategy = RangeSearchStrategy::Binary;
+    const auto result = executeSearch(service, request, handlers);
+    ASSERT_TRUE(result);
+    ASSERT_EQ(result->size(), 2U);
+    EXPECT_EQ((*result)[0].recordId, 2U);
+    EXPECT_EQ((*result)[1].recordId, 1U);
+    request.attribute = static_cast<SearchAttribute>(98);
+    EXPECT_EQ(executeSearch(service, request, handlers).error().code, ErrorCode::UnknownSelection);
+}
+
+TEST_F(ApplicationTest, LoadingReplacesPartialIndexesAndBuildsNewSnapshot) {
+    populate();
+    ASSERT_TRUE(app_.buildIndexes({{SearchAttribute::BirthYear, IndexBackend::Tree}}));
+    const auto reference = app_.getSearchService().findExact(studentBirthYearAttribute, 2003, ExactSearchStrategy::Tree);
+    ASSERT_TRUE(reference);
+    const auto path = directory_ / "students.txt";
+    ASSERT_TRUE(app_.saveStudents(path));
+    ASSERT_TRUE(app_.loadStudents(path));
+    EXPECT_EQ(app_.getSearchService().resolve((*reference)[0]).error().code, ErrorCode::IndexStale);
+    for (const auto& state : app_.getSearchService().getIndexes().getStates(app_.getSearchService().getRepository())) {
+        EXPECT_TRUE(state.built);
+        EXPECT_FALSE(state.stale);
+    }
+}

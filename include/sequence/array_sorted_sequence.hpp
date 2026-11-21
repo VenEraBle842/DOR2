@@ -67,5 +67,23 @@ public:
         items_[position] = std::move(value);
     }
 
+    std::size_t getCapacity() const noexcept { return items_.capacity(); }
+
+    bool replaceEquivalent(std::size_t position, const T& value) {
+        if (position >= items_.size() || compare_(items_[position], value) ||
+            compare_(value, items_[position])) return false;
+        items_[position] = value;
+        return true;
+    }
+
+    bool removeAt(std::size_t position) {
+        if (position >= items_.size()) return false;
+        for (std::size_t index = position + 1; index < items_.size(); ++index) {
+            items_[index - 1] = std::move(items_[index]);
+        }
+        items_.pop_back();
+        return true;
+    }
+
     void clear() noexcept override { items_.clear(); }
 };

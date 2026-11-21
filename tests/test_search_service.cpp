@@ -1,6 +1,7 @@
 #include <gtest/gtest.h>
 
 #include "service/student_search_service.hpp"
+#include "common/two_element.hpp"
 #include "benchmark/benchmark_runner.hpp"
 #include "storage/student_file_storage.hpp"
 
@@ -231,4 +232,91 @@ TEST(BenchmarkIntegrationTest, SmallRunIsVerifiedAndWritesCsv) {
     EXPECT_EQ(header, "DatasetSize,InputOrder,Algorithm,Operation,QueryCount,ElapsedUs,MatchCount,Seed,Verified");
     std::error_code ignored;
     std::filesystem::remove(path, ignored);
+}
+
+TEST(StudentSearchServiceTest, ReferencesResolveBySnapshotPositionAndRejectLaterChanges) {
+    auto service = makeService();
+    EXPECT_EQ(service.findExact(studentIdAttribute, 1, ExactSearchStrategy::Tree)->size(), 1U);
+    const auto records = service.findExact(studentLastNameAttribute, "Smith", ExactSearchStrategy::Binary);
+    ASSERT_TRUE(records);
+    ASSERT_EQ(records->size(), 3U);
+    const auto copy = service;
+    for (const auto& reference : *records) {
+        ASSERT_TRUE(service.resolve(reference));
+        EXPECT_EQ(service.resolve(reference)->id, reference.recordId);
+        EXPECT_EQ(copy.resolve(reference)->id, reference.recordId);
+    }
+    auto resolved = service.resolve((*records)[0]);
+    ASSERT_TRUE(resolved);
+    resolved->firstName = "Changed copy";
+    EXPECT_NE(service.getRepository().at((*records)[0].position).firstName, resolved->firstName);
+
+    auto forged = (*records)[0];
+    forged.position = service.getRepository().getCount();
+    EXPECT_EQ(service.resolve(forged).error().code, ErrorCode::Unexpected);
+    forged = (*records)[0];
+    forged.recordId = 999;
+    EXPECT_EQ(service.resolve(forged).error().code, ErrorCode::Unexpected);
+    ASSERT_TRUE(service.addStudent({50, "A", "Smith", 2005, 4.0}));
+    EXPECT_EQ(service.resolve((*records)[0]).error().code, ErrorCode::IndexStale);
+    EXPECT_TRUE(copy.resolve((*records)[0]));
+}
+
+TEST(StudentSearchServiceTest, UnselectedIndexesAreNotBuiltAsASideEffectOfSearching) {
+    StudentSearchService service;
+    ASSERT_TRUE(service.addStudent({50, "A", "Smith", 2005, 4.0}));
+    ASSERT_TRUE(service.buildIndexes({{SearchAttribute::Gpa, IndexBackend::SortedArray}}));
+    EXPECT_EQ(service.findByGpa(4.0, ExactSearchStrategy::Binary)->size(), 1U);
+    EXPECT_EQ(service.findByGpa(4.0, ExactSearchStrategy::Tree).error().code, ErrorCode::IndexNotBuilt);
+    EXPECT_EQ(service.findById(50, ExactSearchStrategy::Tree).error().code, ErrorCode::IndexNotBuilt);
+    EXPECT_EQ(service.findById(50, ExactSearchStrategy::Linear)->size(), 1U);
+    EXPECT_EQ(service.findById(50, static_cast<ExactSearchStrategy>(99)).error().code, ErrorCode::UnknownSelection);
+    EXPECT_EQ(service.findInGpaRange(3.0, 5.0, static_cast<RangeSearchStrategy>(99)).error().code, ErrorCode::UnknownSelection);
+}
+
+namespace {
+
+using NameYearKey = TwoElement<std::string, int>;
+
+struct NameYearCompare {
+    bool operator()(const NameYearKey& left, const NameYearKey& right) const {
+        if (left.first != right.first) return left.first < right.first;
+        return left.second < right.second;
+    }
+};
+
+} // namespace
+
+TEST(StudentSearchServiceTest, CustomPairKeyWorksWithoutAddingACentralKeyType) {
+    const StudentAttribute<NameYearKey, NameYearCompare> attribute{
+        static_cast<SearchAttribute>(99), "Last name and birth year",
+        [](const Student& student) {
+            return NameYearKey{student.lastName, student.birthYear};
+        }
+    };
+    auto service = makeService();
+    ASSERT_TRUE(service.addStudent({8, "E", "Smith", 2003, 4.0}));
+    service.registerIndex(attribute, IndexBackend::Tree);
+    service.registerIndex(attribute, IndexBackend::SortedArray);
+    ASSERT_TRUE(service.buildIndexes({
+        {attribute.id, IndexBackend::Tree},
+        {attribute.id, IndexBackend::SortedArray}
+    }));
+
+    const NameYearKey key{"Smith", 2003};
+    for (const auto strategy : {ExactSearchStrategy::Linear, ExactSearchStrategy::Tree, ExactSearchStrategy::Binary}) {
+        const auto ids = StudentSearchService::recordIds(service.findExact(attribute, key, strategy));
+        ASSERT_TRUE(ids);
+        expectSameIds(*ids, {1, 8});
+    }
+    for (const auto strategy : {RangeSearchStrategy::Linear, RangeSearchStrategy::Binary}) {
+        const auto ids = StudentSearchService::recordIds(service.findRange(attribute, {"Smith", 2002}, key, strategy));
+        ASSERT_TRUE(ids);
+        expectSameIds(*ids, {2, 1, 8});
+    }
+
+    const auto copy = service;
+    const auto ids = StudentSearchService::recordIds(copy.findExact(attribute, key, ExactSearchStrategy::Tree));
+    ASSERT_TRUE(ids);
+    expectSameIds(*ids, {1, 8});
 }

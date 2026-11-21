@@ -3,6 +3,7 @@
 
 #include <wx/wx.h>
 #include <wx/choice.h>
+#include <wx/checklst.h>
 #include <wx/filedlg.h>
 #include <wx/notebook.h>
 #include <wx/statline.h>
@@ -116,12 +117,12 @@ void showForm(wxWindow* parent, const wxString& title, const FormFields& fields,
     dialog.ShowModal();
 }
 
-DynamicArray<Student> resolveMatches(const StudentSearchService& service, const DynamicArray<RecordId>& ids) {
+DynamicArray<Student> resolveMatches(const StudentSearchService& service, const StudentRecordReferences& ids) {
     DynamicArray<Student> result(ids.size());
-    for (const auto id : ids) {
-        const auto student = service.getRepository().findById(id);
+    for (const auto& reference : ids) {
+        auto student = service.resolve(reference);
         if (!student) throw std::logic_error("Search returned an unknown student ID");
-        result.push_back(*student);
+        result.push_back(std::move(*student));
     }
     return result;
 }
@@ -316,12 +317,24 @@ wxPanel* MainFrame::createIndexesPage() {
     indexState_->SetName("index-state");
     layout->Add(indexState_, 0, wxALL, 12);
     auto actions = std::make_unique<wxBoxSizer>(wxHORIZONTAL);
-    button(page, actions.get(), "Rebuild indexes", "build-indexes", [this] { buildIndexes(); });
+    button(page, actions.get(), "Build selected indexes", "build-indexes", [this] { buildIndexes(); });
     attachSizer(*layout, actions, 0, wxLEFT | wxRIGHT | wxBOTTOM, 12);
+    layout->Add(new wxStaticText(page, wxID_ANY, "Select the attributes and structures to build:"),
+        0, wxLEFT | wxRIGHT | wxBOTTOM, 12);
+    indexSelection_ = new wxCheckListBox(page, wxID_ANY);
+    indexSelection_->SetName("index-selection");
+    for (const auto& state : application_.getSearchService().getIndexes().getStates(
+            application_.getSearchService().getRepository())) {
+        const auto label = state.name + (state.selection.backend == IndexBackend::Tree ? " / Tree" : " / Sorted array");
+        const auto item = indexSelection_->Append(ui(label));
+        indexSelection_->Check(item);
+    }
+    layout->Add(indexSelection_, 0, wxEXPAND | wxLEFT | wxRIGHT | wxBOTTOM, 12);
     statistics_ = new wxListCtrl(page, wxID_ANY, wxDefaultPosition, wxDefaultSize, wxLC_REPORT | wxLC_HRULES);
     statistics_->SetName("index-statistics");
     statistics_->InsertColumn(0, "Statistic", wxLIST_FORMAT_LEFT, FromDIP(280));
-    statistics_->InsertColumn(1, "Count", wxLIST_FORMAT_LEFT, FromDIP(150));
+    statistics_->InsertColumn(1, "Keys", wxLIST_FORMAT_LEFT, FromDIP(100));
+    statistics_->InsertColumn(2, "State", wxLIST_FORMAT_LEFT, FromDIP(150));
     layout->Add(statistics_, 1, wxEXPAND | wxLEFT | wxRIGHT | wxBOTTOM, 12);
     installSizer(*page, layout);
     return page;
@@ -421,7 +434,19 @@ void MainFrame::saveStudents() {
 }
 
 void MainFrame::buildIndexes() {
-    runTask("Indexes rebuilt", [](StudentApplication& app, TaskOutcome&) { return app.buildIndexes(); });
+    DynamicArray<IndexSelection> selections;
+    for (std::size_t index = 0; index < snapshot_.indexes.size(); ++index) {
+        if (indexSelection_->IsChecked(static_cast<unsigned int>(index))) {
+            selections.push_back(snapshot_.indexes[index].selection);
+        }
+    }
+    if (selections.empty()) {
+        showError(makeError(ErrorCode::UnknownSelection, {.field = "Indexes", .detail = "Select at least one index."}));
+        return;
+    }
+    runTask("Selected indexes built", [selections](StudentApplication& app, TaskOutcome&) {
+        return app.buildIndexes(selections);
+    });
 }
 
 void MainFrame::search() {
@@ -440,7 +465,7 @@ void MainFrame::search() {
     matches_->setRows({});
     matchCount_->SetLabel("Searching...");
     runTask("Search complete", [request](StudentApplication& app, TaskOutcome& outcome) -> std::expected<void, Error> {
-        const auto result = app.search(request);
+        const auto result = app.searchRecords(request);
         if (!result) return std::unexpected(result.error());
         outcome.matches = resolveMatches(app.getSearchService(), *result);
         return {};
@@ -483,10 +508,12 @@ MainFrame::Snapshot MainFrame::takeSnapshot(const StudentApplication& app) {
     result.students = DynamicArray<Student>(repository.getCount());
     for (std::size_t i = 0; i < repository.getCount(); ++i) result.students.push_back(repository.at(i));
     for (const auto& row : app.getLatestResults()) result.benchmark.push_back(row);
-    const auto statistics = service.getIndexStatistics();
-    if (statistics) result.statistics = *statistics;
-    result.indexState = !service.getIndexes().isBuilt() ? "not built" :
-                       service.getIndexes().isStale(repository) ? "out of date" : "ready";
+    result.indexes = service.getIndexes().getStates(repository);
+    std::size_t ready = 0;
+    for (const auto& state : result.indexes) {
+        if (state.built && !state.stale) ++ready;
+    }
+    result.indexState = std::to_string(ready) + "/" + std::to_string(result.indexes.size()) + " ready";
     return result;
 }
 
@@ -498,16 +525,11 @@ void MainFrame::refreshSnapshot() {
     indexState_->SetLabel(ui("Indexes: " + snapshot_.indexState));
     SetStatusText(ui("Records: " + std::to_string(snapshot_.students.size()) + " | Indexes: " + snapshot_.indexState), 1);
     statistics_->DeleteAllItems();
-    if (snapshot_.statistics) {
-        const auto& stats = *snapshot_.statistics;
-        const TwoElement<std::string, std::size_t> rows[] = {
-            {"Records / ID keys", stats.recordCount}, {"Last-name keys", stats.lastNameKeyCount},
-            {"Birth-year keys", stats.birthYearKeyCount}, {"GPA keys", stats.gpaKeyCount},
-            {"Composite keys", stats.compositeKeyCount}};
-        for (const auto& row : rows) {
-            const auto index = statistics_->InsertItem(statistics_->GetItemCount(), ui(row.first));
-            statistics_->SetItem(index, 1, ui(std::to_string(row.second)));
-        }
+    for (const auto& state : snapshot_.indexes) {
+        const auto label = state.name + (state.selection.backend == IndexBackend::Tree ? " / Tree" : " / Sorted array");
+        const auto row = statistics_->InsertItem(statistics_->GetItemCount(), ui(label));
+        statistics_->SetItem(row, 1, state.built ? ui(std::to_string(state.keyCount)) : wxString("-"));
+        statistics_->SetItem(row, 2, !state.built ? "not built" : state.stale ? "out of date" : "ready");
     }
     benchmark_->Freeze();
     benchmark_->DeleteAllItems();

@@ -27,6 +27,7 @@ add_library(dor2_core
     src/student_index_catalog.cpp
     src/student_file_storage.cpp
     src/student_application.cpp
+    src/search_request.cpp
 )
 target_compile_features(dor2_core PUBLIC cxx_std_23)
 target_include_directories(dor2_core PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/include")
@@ -83,6 +84,7 @@ if(DOR2_BUILD_TESTS)
     find_package(GTest REQUIRED)
     add_executable(dor2_tests
         tests/test_tree_dictionary.cpp
+        tests/test_dictionary_contract.cpp
         tests/test_sorted_sequence.cpp
         tests/test_binary_search.cpp
         tests/test_student_indexes.cpp

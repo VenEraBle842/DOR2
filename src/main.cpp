@@ -6,6 +6,7 @@
 #include <cstdint>
 #include <expected>
 #include <iostream>
+#include <sstream>
 #include <optional>
 #include <string>
 
@@ -68,16 +69,17 @@ void printStudent(const Student& student) {
 
 void printSearchResults(
     const StudentSearchService& service,
-    const std::expected<DynamicArray<RecordId>, Error>& result
+    const std::expected<StudentRecordReferences, Error>& result
 ) {
     if (!result) {
         printError(result.error());
         return;
     }
     std::cout << "Matches: " << result->size() << '\n';
-    for (const RecordId id : *result) {
-        const auto student = service.getRepository().findById(id);
+    for (const auto& reference : *result) {
+        const auto student = service.resolve(reference);
         if (student) printStudent(*student);
+        else printError(student.error());
     }
 }
 
@@ -132,16 +134,59 @@ void saveStudents(const StudentApplication& app) {
 }
 
 void showIndexStatistics(const StudentSearchService& service) {
-    const auto statistics = service.getIndexStatistics();
-    if (!statistics) {
-        printError(statistics.error());
+    const auto states = service.getIndexes().getStates(service.getRepository());
+    std::cout << "Records=" << service.getRepository().getCount() << '\n';
+    for (const auto& state : states) {
+        std::cout << state.name << (state.selection.backend == IndexBackend::Tree ? " / Tree: " : " / Sorted array: ")
+                  << (!state.built ? "not built" : state.stale ? "out of date" : "ready");
+        if (state.built) std::cout << ", keys=" << state.keyCount;
+        std::cout << '\n';
+    }
+}
+
+void buildSelectedIndexes(StudentApplication& app) {
+    const auto& service = app.getSearchService();
+    const auto states = service.getIndexes().getStates(service.getRepository());
+    std::cout << "0. All indexes\n";
+    for (std::size_t index = 0; index < states.size(); ++index) {
+        std::cout << index + 1 << ". " << states[index].name
+                  << (states[index].selection.backend == IndexBackend::Tree
+                      ? " / Tree\n" : " / Sorted array\n");
+    }
+    const auto input = readText("Index numbers separated by spaces (0 = all): ");
+    if (!input) return;
+    std::istringstream numbers(*input);
+    DynamicArray<IndexSelection> selections;
+    std::string token;
+    while (numbers >> token) {
+        const auto number = parseBoundedSize(token, "Index", states.size());
+        if (!number) {
+            printError(number.error());
+            return;
+        }
+        if (*number == 0) {
+            const bool hasMoreNumbers = static_cast<bool>(numbers >> token);
+            if (!selections.empty() || hasMoreNumbers) {
+                printError(makeError(ErrorCode::UnknownSelection,
+                    {.field = "Index", .detail = "Use 0 alone to build all indexes."}));
+                return;
+            }
+            for (const auto& state : states) {
+                selections.push_back(state.selection);
+            }
+            break;
+        }
+        selections.push_back(states[*number - 1].selection);
+    }
+    if (selections.empty()) {
+        printError(makeError(ErrorCode::UnknownSelection, {.field = "Index"}));
         return;
     }
-    std::cout << "Records=" << statistics->recordCount
-              << ", last-name keys=" << statistics->lastNameKeyCount
-              << ", birth-year keys=" << statistics->birthYearKeyCount
-              << ", GPA keys=" << statistics->gpaKeyCount
-              << ", composite keys=" << statistics->compositeKeyCount << '\n';
+    if (const auto built = app.buildIndexes(selections); !built) {
+        printError(built.error());
+        return;
+    }
+    std::cout << "Selected indexes built.\n";
 }
 
 void handleExactSearch(const StudentApplication& app) {
@@ -159,7 +204,7 @@ void handleExactSearch(const StudentApplication& app) {
     request.attribute = static_cast<SearchAttribute>(*attribute - 1);
     request.exactStrategy = *strategy;
     request.lower.value = *value;
-    printSearchResults(app.getSearchService(), app.search(request));
+    printSearchResults(app.getSearchService(), app.searchRecords(request));
 }
 
 void handleRangeSearch(const StudentApplication& app) {
@@ -180,7 +225,7 @@ void handleRangeSearch(const StudentApplication& app) {
     request.rangeStrategy = *strategy;
     request.lower.value = *lower;
     request.upper.value = *upper;
-    printSearchResults(app.getSearchService(), app.search(request));
+    printSearchResults(app.getSearchService(), app.searchRecords(request));
 }
 
 std::optional<SearchKeyInput> readCompositeKey() {
@@ -220,7 +265,7 @@ void handleCompositeSearch(const StudentApplication& app) {
         if (!strategy) return;
         request.exactStrategy = *strategy;
     }
-    printSearchResults(app.getSearchService(), app.search(request));
+    printSearchResults(app.getSearchService(), app.searchRecords(request));
 }
 
 void runBenchmark(StudentApplication& app) {
@@ -290,10 +335,7 @@ int main() {
                 case 3: showStudents(service); break;
                 case 4: loadStudents(app); break;
                 case 5: saveStudents(app); break;
-                case 6:
-                    if (const auto built = app.buildIndexes(); !built) printError(built.error());
-                    else std::cout << "Indexes built.\n";
-                    break;
+                case 6: buildSelectedIndexes(app); break;
                 case 7: showIndexStatistics(service); break;
                 case 8: handleExactSearch(app); break;
                 case 9: handleRangeSearch(app); break;

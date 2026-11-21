@@ -96,7 +96,11 @@ std::expected<StudentSearchService, Error> makeBenchmarkService(
     StudentSearchService service;
     const auto replaced = service.replaceStudents(std::move(students));
     if (!replaced) return std::unexpected(replaced.error());
-    service.buildIndexes();
+    const auto built = service.buildIndexes({
+        {SearchAttribute::BirthYear, IndexBackend::Tree},
+        {SearchAttribute::BirthYear, IndexBackend::SortedArray}
+    });
+    if (!built) return std::unexpected(built.error());
     return service;
 }
 
@@ -254,13 +258,17 @@ std::expected<DynamicArray<BenchmarkResult>, Error> BenchmarkRunner::run(
         appendResult(results, datasetSize, name, "TreeDictionary", "Build", 1,
                      *treeBuild, seed, treeBuild->matchCount == datasetSize);
 
-        const auto sortedBuild = measureBuild<ArraySortedSequence<int>>(
-            [&values](auto& sequence) -> std::expected<std::size_t, Error> {
-                for (const int value : values) sequence.add(value);
-                return sequence.getLength();
+        const auto sortedBuild = measureBuild<SortedArrayDictionary<int, std::size_t>>(
+            [&values](auto& dictionary) -> std::expected<std::size_t, Error> {
+                for (std::size_t index = 0; index < values.size(); ++index) {
+                    if (const auto added = dictionary.add(values[index], index); !added) {
+                        return std::unexpected(added.error());
+                    }
+                }
+                return dictionary.getCount();
             });
         if (!sortedBuild) return std::unexpected(sortedBuild.error());
-        appendResult(results, datasetSize, name, "ArraySortedSequence", "Build", 1,
+        appendResult(results, datasetSize, name, "SortedArrayDictionary", "Build", 1,
                      *sortedBuild, seed, sortedBuild->matchCount == datasetSize);
 
         const auto prepared = makeBenchmarkService(values);

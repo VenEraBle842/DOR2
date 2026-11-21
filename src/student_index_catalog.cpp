@@ -1,62 +1,135 @@
 #include "index/student_index_catalog.hpp"
 
-void StudentIndexCatalog::build(const StudentRepository& repository) {
-    idTreeIndex_.clear();
-    lastNameTreeIndex_.clear();
-    birthYearTreeIndex_.clear();
-    gpaTreeIndex_.clear();
-    compositeTreeIndex_.clear();
-    idSortedArrayIndex_.clear();
-    lastNameSortedArrayIndex_.clear();
-    birthYearSortedArrayIndex_.clear();
-    gpaSortedArrayIndex_.clear();
-    compositeSortedArrayIndex_.clear();
-    indexedSnapshotId_.reset();
+StudentIndexCatalog::StudentIndexCatalog() {
+    forEachStudentAttribute([this](const auto& attribute) {
+        registerIndex(attribute, IndexBackend::Tree);
+        registerIndex(attribute, IndexBackend::SortedArray);
+    });
+}
 
-    for (std::size_t position = 0; position < repository.getCount(); ++position) {
-        const Student& student = repository.at(position);
-        const StudentCompositeKey composite{
-            student.lastName, student.firstName, student.birthYear
-        };
-
-        const auto inserted = idTreeIndex_.add(student.id, position);
-        if (!inserted) {
-            throw std::logic_error("duplicate student ID while building indexes");
-        }
-        idSortedArrayIndex_.add({student.id, student.id});
-        addToGroup(lastNameTreeIndex_, student.lastName, student.id);
-        addToGroup(birthYearTreeIndex_, student.birthYear, student.id);
-        addToGroup(gpaTreeIndex_, student.gpa, student.id);
-        addToGroup(compositeTreeIndex_, composite, student.id);
-
-        lastNameSortedArrayIndex_.add({student.lastName, student.id});
-        birthYearSortedArrayIndex_.add({student.birthYear, student.id});
-        gpaSortedArrayIndex_.add({student.gpa, student.id});
-        compositeSortedArrayIndex_.add({composite, student.id});
+StudentIndexCatalog::StudentIndexCatalog(const StudentIndexCatalog& other) {
+    for (const auto& entry : other.indexes_) {
+        std::shared_ptr<IStudentIndexBase> copy = entry.index->clone();
+        indexes_.push_back({entry.selection, entry.name, std::move(copy)});
     }
+}
 
-    indexedSnapshotId_ = repository.getSnapshotId();
+StudentIndexCatalog& StudentIndexCatalog::operator=(const StudentIndexCatalog& other) {
+    if (this != &other) {
+        StudentIndexCatalog copy(other);
+        *this = std::move(copy);
+    }
+    return *this;
+}
+
+std::shared_ptr<const IStudentIndexBase> StudentIndexCatalog::getIndex(
+    IndexSelection selection
+) const noexcept {
+    for (const auto& entry : indexes_) {
+        if (entry.selection == selection) return entry.index;
+    }
+    return nullptr;
+}
+
+DynamicArray<IndexSelection> StudentIndexCatalog::getSelections() const {
+    DynamicArray<IndexSelection> result;
+    for (const auto& entry : indexes_) {
+        result.push_back(entry.selection);
+    }
+    return result;
+}
+
+DynamicArray<StudentIndexState> StudentIndexCatalog::getStates(
+    const StudentRepository& repository
+) const {
+    DynamicArray<StudentIndexState> result;
+    for (const auto& entry : indexes_) {
+        result.push_back({
+            entry.selection, entry.name, entry.index->isBuilt(),
+            entry.index->isStale(repository), entry.index->getKeyCount()
+        });
+    }
+    return result;
+}
+
+std::expected<void, Error> StudentIndexCatalog::build(
+    const StudentRepository& repository,
+    const DynamicArray<IndexSelection>& selections
+) {
+    struct IndexReplacement {
+        IndexSelection selection;
+        std::shared_ptr<IStudentIndexBase> index;
+    };
+
+    DynamicArray<IndexReplacement> replacements;
+    for (const auto selection : selections) {
+        const auto current = getIndex(selection);
+        if (!current) {
+            return std::unexpected(makeError(ErrorCode::UnknownSelection, {.field = "Index"}));
+        }
+        bool duplicate = false;
+        for (const auto& replacement : replacements) {
+            if (replacement.selection == selection) {
+                duplicate = true;
+                break;
+            }
+        }
+        if (duplicate) continue;
+
+        std::shared_ptr<IStudentIndexBase> replacement = current->createEmpty();
+        replacement->build(repository);
+        replacements.push_back({selection, std::move(replacement)});
+    }
+    for (auto& replacement : replacements) {
+        for (auto& entry : indexes_) {
+            if (entry.selection == replacement.selection) {
+                entry.index = std::move(replacement.index);
+                break;
+            }
+        }
+    }
+    return {};
+}
+
+void StudentIndexCatalog::build(const StudentRepository& repository) {
+    const auto result = build(repository, getSelections());
+    if (!result) {
+        throw std::logic_error("invalid registered index selection");
+    }
+}
+
+bool StudentIndexCatalog::isBuilt() const noexcept {
+    for (const auto& entry : indexes_) {
+        if (entry.index->isBuilt()) return true;
+    }
+    return false;
+}
+
+bool StudentIndexCatalog::isStale(const StudentRepository& repository) const noexcept {
+    for (const auto& entry : indexes_) {
+        if (entry.index->isStale(repository)) return true;
+    }
+    return false;
+}
+
+std::size_t StudentIndexCatalog::getTreeKeyCount(SearchAttribute attribute) const {
+    const auto index = getIndex({attribute, IndexBackend::Tree});
+    return index ? index->getKeyCount() : 0;
 }
 
 std::expected<StudentIndexStatistics, Error> StudentIndexCatalog::getStatistics(
     const StudentRepository& repository
 ) const {
-    if (const auto state = checkIndexState(repository); !state) return std::unexpected(state.error());
+    if (indexes_.empty()) return std::unexpected(makeError(ErrorCode::IndexNotBuilt));
+    for (const auto& entry : indexes_) {
+        if (!entry.index->isBuilt()) return std::unexpected(makeError(ErrorCode::IndexNotBuilt));
+        if (entry.index->isStale(repository)) return std::unexpected(makeError(ErrorCode::IndexStale));
+    }
     return StudentIndexStatistics{
         repository.getCount(),
-        lastNameTreeIndex_.getCount(),
-        birthYearTreeIndex_.getCount(),
-        gpaTreeIndex_.getCount(),
-        compositeTreeIndex_.getCount()
+        getTreeKeyCount(SearchAttribute::LastName),
+        getTreeKeyCount(SearchAttribute::BirthYear),
+        getTreeKeyCount(SearchAttribute::Gpa),
+        getTreeKeyCount(SearchAttribute::CompositeKey)
     };
-}
-
-std::expected<std::optional<std::size_t>, Error> StudentIndexCatalog::findPositionByIdTree(
-    const StudentRepository& repository,
-    RecordId id
-) const {
-    if (const auto state = checkIndexState(repository); !state) return std::unexpected(state.error());
-    const auto position = idTreeIndex_.find(id);
-    if (!position) return std::optional<std::size_t>{};
-    return position;
 }

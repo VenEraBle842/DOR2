@@ -11,6 +11,7 @@
 #include <thread>
 
 class wxChoice;
+class wxCheckListBox;
 class wxNotebook;
 class wxPanel;
 class wxStaticText;
@@ -30,8 +31,8 @@ class MainFrame : public wxFrame {
     struct Snapshot {
         DynamicArray<Student> students;
         DynamicArray<BenchmarkResult> benchmark;
-        std::optional<StudentIndexStatistics> statistics;
         std::string indexState;
+        DynamicArray<StudentIndexState> indexes;
     };
     struct TaskOutcome {
         std::optional<Error> error;
@@ -57,6 +58,7 @@ class MainFrame : public wxFrame {
     wxStaticText* matchCount_{};
     wxStaticText* indexState_{};
     wxListCtrl* statistics_{};
+    wxCheckListBox* indexSelection_{};
     wxListCtrl* benchmark_{};
     wxTextCtrl* datasetSize_{};
     wxTextCtrl* queryCount_{};

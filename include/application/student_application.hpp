@@ -18,7 +18,15 @@ public:
     const DynamicArray<BenchmarkResult>& getLatestResults() const noexcept { return latestResults_; }
 
     std::expected<DynamicArray<RecordId>, Error> search(const SearchRequest& request) const {
+        return StudentSearchService::recordIds(searchRecords(request));
+    }
+
+    std::expected<StudentRecordReferences, Error> searchRecords(const SearchRequest& request) const {
         return executeSearch(searchService_, request);
+    }
+
+    std::expected<void, Error> buildIndexes(const DynamicArray<IndexSelection>& selections) {
+        return searchService_.buildIndexes(selections);
     }
 
     std::expected<void, Error> addStudent(const Student& student);

@@ -10,14 +10,14 @@ from matplotlib.ticker import FuncFormatter
 
 ORDERS = ("Ascending", "Descending", "Random")
 PANELS = (
-    ("Build", "Build structures", ("TreeDictionary", "ArraySortedSequence")),
+    ("Build", "Build structures", ("TreeDictionary", "SortedArrayDictionary")),
     ("ExactSearch", "Exact search", ("Linear", "TreeDictionary", "BinarySearch")),
     ("RangeSearch", "Range search", ("Linear", "BinarySearch")),
 )
 COLORS = {
     "Linear": "#df8833",
     "TreeDictionary": "#268578",
-    "ArraySortedSequence": "#8c6bb1",
+    "SortedArrayDictionary": "#8c6bb1",
     "BinarySearch": "#357abd",
 }
 

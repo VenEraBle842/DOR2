@@ -98,12 +98,18 @@ public:
         return modify(key, [&value](TValue& current) { current = value; });
     }
 
-    template <typename Modifier>
-    requires std::invocable<Modifier, TValue&>
-    bool modify(const TKey& key, Modifier&& modifier) {
+    std::unique_ptr<IDictionary<TKey, TValue>> createEmpty() const override {
+        return std::make_unique<TreeDictionary>();
+    }
+
+    std::unique_ptr<IDictionary<TKey, TValue>> clone() const override {
+        return std::make_unique<TreeDictionary>(*this);
+    }
+
+    bool modify(const TKey& key, const std::function<void(TValue&)>& modifier) override {
         try {
             const EntryPointer& entry = tree_.search(makeProbe(key));
-            std::invoke(std::forward<Modifier>(modifier), entry->value.value());
+            modifier(entry->value.value());
             return true;
         } catch (const NodeNotFoundException&) {
             return false;

@@ -1,9 +1,9 @@
 #pragma once
 
 #include "service/student_search_service.hpp"
-#include "common/number_input.hpp"
 
-enum class SearchAttribute { Id, LastName, BirthYear, Gpa, CompositeKey };
+#include <functional>
+#include <utility>
 
 struct SearchKeyInput {
     std::string value{};
@@ -20,57 +20,66 @@ struct SearchRequest {
     SearchKeyInput upper;
 };
 
-inline std::expected<DynamicArray<RecordId>, Error> executeSearch(
-    const StudentSearchService& service, const SearchRequest& request
-) {
-    const auto& lower = request.lower;
-    const auto& upper = request.upper;
-    std::expected<DynamicArray<RecordId>, Error> result;
-    switch (request.attribute) {
-        case SearchAttribute::Id: {
-            if (request.range) return std::unexpected(makeError(ErrorCode::UnknownSelection, {.field = "Range attribute"}));
-            const auto key = parseNumber<RecordId>(lower.value, "ID");
-            if (!key) return std::unexpected(key.error());
-            result = service.findById(*key, request.exactStrategy);
-            break;
+template <typename Key, typename Compare>
+struct AttributeSearchHandler {
+    StudentAttribute<Key, Compare> attribute;
+    std::function<std::expected<Key, Error>(const SearchKeyInput&)> parseKey;
+    bool supportsRange{false};
+
+    std::expected<StudentRecordReferences, Error> operator()(
+        const StudentSearchService& service,
+        const SearchRequest& request
+    ) const {
+        if (request.range && !supportsRange) {
+            return std::unexpected(makeError(ErrorCode::UnknownSelection, {.field = "Range attribute"}));
         }
-        case SearchAttribute::LastName:
-            if (request.range) return std::unexpected(makeError(ErrorCode::UnknownSelection, {.field = "Range attribute"}));
-            result = service.findByLastName(lower.value, request.exactStrategy);
-            break;
-        case SearchAttribute::BirthYear: {
-            const auto low = parseNumber<int>(lower.value, "Birth year / lower bound");
-            if (!low) return std::unexpected(low.error());
-            if (request.range) {
-                const auto high = parseNumber<int>(upper.value, "Upper birth year");
-                if (!high) return std::unexpected(high.error());
-                result = service.findInBirthYearRange(*low, *high, request.rangeStrategy);
-            } else result = service.findByBirthYear(*low, request.exactStrategy);
-            break;
+        const auto lower = parseKey(request.lower);
+        if (!lower) return std::unexpected(lower.error());
+        if (!request.range) {
+            return service.findExact(attribute, *lower, request.exactStrategy);
         }
-        case SearchAttribute::Gpa: {
-            const auto low = parseNumber<double>(lower.value, "GPA / lower bound");
-            if (!low) return std::unexpected(low.error());
-            if (request.range) {
-                const auto high = parseNumber<double>(upper.value, "Upper GPA");
-                if (!high) return std::unexpected(high.error());
-                result = service.findInGpaRange(*low, *high, request.rangeStrategy);
-            } else result = service.findByGpa(*low, request.exactStrategy);
-            break;
-        }
-        case SearchAttribute::CompositeKey: {
-            const auto lowYear = parseNumber<int>(lower.birthYear, "Birth year / lower key");
-            if (!lowYear) return std::unexpected(lowYear.error());
-            const StudentCompositeKey low{lower.value, lower.firstName, *lowYear};
-            if (request.range) {
-                const auto highYear = parseNumber<int>(upper.birthYear, "Birth year / upper key");
-                if (!highYear) return std::unexpected(highYear.error());
-                const StudentCompositeKey high{upper.value, upper.firstName, *highYear};
-                result = service.findInCompositeKeyRange(low, high, request.rangeStrategy);
-            } else result = service.findByCompositeKey(low, request.exactStrategy);
-            break;
-        }
-        default: return std::unexpected(makeError(ErrorCode::UnknownSelection, {.field = "Search attribute"}));
+        const auto upper = parseKey(request.upper);
+        if (!upper) return std::unexpected(upper.error());
+        return service.findRange(attribute, *lower, *upper, request.rangeStrategy);
     }
-    return result;
-}
+};
+
+class SearchRequestHandlers {
+public:
+    using Handler = std::function<std::expected<StudentRecordReferences, Error>(
+        const StudentSearchService&, const SearchRequest&)>;
+
+private:
+    struct Registration {
+        SearchAttribute attribute{SearchAttribute::Id};
+        Handler handler;
+    };
+
+    DynamicArray<Registration> handlers_;
+
+public:
+    void registerHandler(SearchAttribute attribute, Handler handler);
+
+    template <typename Key, typename Compare, typename Parser>
+    void registerAttribute(
+        const StudentAttribute<Key, Compare>& attribute,
+        Parser parser,
+        bool supportsRange
+    ) {
+        const AttributeSearchHandler<Key, Compare> handler{attribute, std::move(parser), supportsRange};
+        registerHandler(attribute.id, handler);
+    }
+
+    std::expected<StudentRecordReferences, Error> execute(
+        const StudentSearchService& service,
+        const SearchRequest& request
+    ) const;
+};
+
+const SearchRequestHandlers& defaultSearchHandlers();
+
+std::expected<StudentRecordReferences, Error> executeSearch(
+    const StudentSearchService& service,
+    const SearchRequest& request,
+    const SearchRequestHandlers& handlers = defaultSearchHandlers()
+);
