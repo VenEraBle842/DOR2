@@ -58,7 +58,7 @@ public:
         registerHandler(attribute.getDescription(), handler);
     }
 
-    DynamicArray<SearchAttributeDescription> getAttributes(bool range = false) const;
+    DynamicArray<SearchAttributeDescription> getAttributes(bool rangeOnly = false) const;
 
     std::expected<StudentRecordReferences, Error> execute(
         const StudentSearchService& service,

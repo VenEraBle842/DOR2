@@ -11,7 +11,7 @@ using SearchKeyInput = DynamicArray<std::string>;
 struct SearchAttributeDescription {
     SearchAttribute id{SearchAttribute::Id};
     std::string name;
-    DynamicArray<std::string> fieldNames;
+    DynamicArray<std::string> fieldLabels;
     bool supportsRange{false};
     std::string hint;
 };
@@ -23,13 +23,13 @@ struct StudentAttribute {
     SearchAttribute id;
     std::string name;
     std::function<Key(const Student&)> extractKey;
-    DynamicArray<std::string> fieldNames{};
+    DynamicArray<std::string> fieldLabels{};
     std::function<std::expected<Key, Error>(const SearchKeyInput&)> parseKey{};
     bool supportsRange{false};
     std::string hint{};
 
     SearchAttributeDescription getDescription() const {
-        return {id, name, fieldNames, supportsRange, hint};
+        return {id, name, fieldLabels, supportsRange, hint};
     }
 };
 
@@ -73,7 +73,7 @@ inline const StudentAttribute<StudentCompositeKey, StudentCompositeKeyCompare> s
 };
 
 template <typename Action>
-void forEachStudentAttribute(Action action) {
+void forEachDefaultStudentAttribute(Action action) {
     action(studentIdAttribute);
     action(studentLastNameAttribute);
     action(studentBirthYearAttribute);

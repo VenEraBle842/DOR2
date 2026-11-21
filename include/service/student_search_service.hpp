@@ -8,7 +8,7 @@
 class StudentSearchService {
 private:
     StudentRepository repository_;
-    StudentIndexCatalog indexes_;
+    StudentIndexCatalog indexCatalog_;
 
     template <typename Key, typename Compare>
     std::expected<StudentRecordReferences, Error> findExactLinear(
@@ -81,7 +81,7 @@ private:
 
 public:
     const StudentRepository& getRepository() const noexcept { return repository_; }
-    const StudentIndexCatalog& getIndexes() const noexcept { return indexes_; }
+    const StudentIndexCatalog& getIndexCatalog() const noexcept { return indexCatalog_; }
 
     std::expected<void, Error> addStudent(const Student& student) {
         return repository_.add(student);
@@ -93,18 +93,18 @@ public:
 
     template <typename Key, typename Compare>
     void registerIndex(const StudentAttribute<Key, Compare>& attribute, IndexBackend backend) {
-        indexes_.registerIndex(attribute, backend);
+        indexCatalog_.registerIndex(attribute, backend);
     }
 
     void clearStudents() noexcept { repository_.clear(); }
-    void buildIndexes() { indexes_.build(repository_); }
+    void buildIndexes() { indexCatalog_.build(repository_); }
 
     std::expected<void, Error> buildIndexes(const DynamicArray<IndexSelection>& selections) {
-        return indexes_.build(repository_, selections);
+        return indexCatalog_.build(repository_, selections);
     }
 
     StudentIndexStatistics getIndexStatistics() const {
-        return indexes_.getStatistics(repository_);
+        return indexCatalog_.getStatistics(repository_);
     }
 
     std::expected<Student, Error> resolve(
@@ -122,12 +122,12 @@ public:
     }
 
     static std::expected<DynamicArray<RecordId>, Error> recordIds(
-        const std::expected<StudentRecordReferences, Error>& records
+        const std::expected<StudentRecordReferences, Error>& references
     ) {
-        if (!records) return std::unexpected(records.error());
+        if (!references) return std::unexpected(references.error());
         DynamicArray<RecordId> ids;
-        for (const auto& record : *records) {
-            ids.push_back(record.recordId);
+        for (const auto& reference : *references) {
+            ids.push_back(reference.recordId);
         }
         return ids;
     }
@@ -147,7 +147,7 @@ public:
         const IndexBackend backend = strategy == ExactSearchStrategy::Tree
             ? IndexBackend::Tree : IndexBackend::SortedArray;
         using Key = typename Attribute::KeyType;
-        const auto index = indexes_.getIndex<Key>({attribute.id, backend});
+        const auto index = indexCatalog_.getIndex<Key>({attribute.id, backend});
         if (!index) {
             return std::unexpected(makeError(ErrorCode::UnknownSelection, {.field = "Index"}));
         }
@@ -168,14 +168,14 @@ public:
             return std::unexpected(makeError(ErrorCode::UnknownSelection, {.field = "Range strategy"}));
         }
         using Key = typename Attribute::KeyType;
-        const auto index = indexes_.getIndex<Key>({attribute.id, IndexBackend::SortedArray});
+        const auto index = indexCatalog_.getIndex<Key>({attribute.id, IndexBackend::SortedArray});
         if (!index) {
             return std::unexpected(makeError(ErrorCode::UnknownSelection, {.field = "Range index"}));
         }
         if (!index->supportsRangeSearch()) {
             return std::unexpected(makeError(ErrorCode::UnknownSelection, {.field = "Range index"}));
         }
-        const auto& range = index->rangeSearch();
+        const auto& range = index->getRangeSearch();
         return range.findRange(repository_, lower, upper);
     }
 

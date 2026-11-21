@@ -136,7 +136,7 @@ void saveStudents(const StudentApplication& app) {
 void showIndexStatistics(const StudentSearchService& service) {
     const auto statistics = service.getIndexStatistics();
     std::cout << "Records=" << statistics.recordCount << '\n';
-    for (const auto& state : statistics.indexes) {
+    for (const auto& state : statistics.indexStates) {
         std::cout << state.name << (state.selection.backend == IndexBackend::Tree ? " / Tree: " : " / Sorted array: ")
                   << (!state.built ? "not built" : state.stale ? "out of date" : "ready");
         if (state.built) std::cout << ", keys=" << state.keyCount;
@@ -146,7 +146,7 @@ void showIndexStatistics(const StudentSearchService& service) {
 
 void buildSelectedIndexes(StudentApplication& app) {
     const auto& service = app.getSearchService();
-    const auto states = service.getIndexes().getStates(service.getRepository());
+    const auto states = service.getIndexCatalog().getStates(service.getRepository());
     std::cout << "0. All indexes\n";
     for (std::size_t index = 0; index < states.size(); ++index) {
         std::cout << index + 1 << ". " << states[index].name
@@ -193,7 +193,7 @@ std::optional<SearchAttributeDescription> readSearchAttribute(bool range, bool m
     const auto attributes = defaultSearchHandlers().getAttributes(range);
     DynamicArray<SearchAttributeDescription> choices;
     for (const auto& attribute : attributes) {
-        if (!multipleFieldsOnly || attribute.fieldNames.size() > 1) {
+        if (!multipleFieldsOnly || attribute.fieldLabels.size() > 1) {
             choices.push_back(attribute);
         }
     }
@@ -218,7 +218,7 @@ std::optional<SearchAttributeDescription> readSearchAttribute(bool range, bool m
 
 std::optional<SearchKeyInput> readSearchKey(const SearchAttributeDescription& attribute) {
     SearchKeyInput result;
-    for (const auto& field : attribute.fieldNames) {
+    for (const auto& field : attribute.fieldLabels) {
         const auto value = readText(field + ": ");
         if (!value) return std::nullopt;
         result.push_back(*value);
@@ -252,10 +252,10 @@ void handleSearch(const StudentApplication& app, bool range, bool multipleFields
         if (!upper) return;
         request.upper = *upper;
     }
-    printSearchResults(app.getSearchService(), app.searchRecords(request));
+    printSearchResults(app.getSearchService(), app.searchReferences(request));
 }
 
-void handleCompositeSearch(const StudentApplication& app) {
+void handleMultiFieldSearch(const StudentApplication& app) {
     const auto mode = readNumber<int>("Search: 1 - exact, 2 - range\n> ");
     if (!mode) return;
     if (*mode != 1 && *mode != 2) {
@@ -336,7 +336,7 @@ int main() {
                 case 7: showIndexStatistics(service); break;
                 case 8: handleSearch(app, false); break;
                 case 9: handleSearch(app, true); break;
-                case 10: handleCompositeSearch(app); break;
+                case 10: handleMultiFieldSearch(app); break;
                 case 11: runBenchmark(app); break;
                 case 12: exportBenchmark(app); break;
                 default: printError(makeError(ErrorCode::UnknownSelection, {.field = "Menu"})); break;

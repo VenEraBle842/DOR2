@@ -10,40 +10,40 @@
 #include <stdexcept>
 #include <utility>
 
-template <typename TKey, typename TValue>
+template <typename Key, typename Value>
 struct DictionaryEntry {
-    TKey key;
-    std::optional<TValue> value;
+    Key key;
+    std::optional<Value> value;
 
-    DictionaryEntry(TKey entryKey, TValue entryValue)
+    DictionaryEntry(Key entryKey, Value entryValue)
         : key(std::move(entryKey)), value(std::move(entryValue)) {}
 
-    explicit DictionaryEntry(TKey entryKey) : key(std::move(entryKey)) {}
+    explicit DictionaryEntry(Key entryKey) : key(std::move(entryKey)) {}
 };
 
-template <typename TKey, typename TValue, typename Compare>
+template <typename Key, typename Value, typename Compare>
 struct DictionaryEntryPointerCompare {
     Compare compare{};
 
     bool operator()(
-        const std::shared_ptr<DictionaryEntry<TKey, TValue>>& left,
-        const std::shared_ptr<DictionaryEntry<TKey, TValue>>& right
+        const std::shared_ptr<DictionaryEntry<Key, Value>>& left,
+        const std::shared_ptr<DictionaryEntry<Key, Value>>& right
     ) const {
         return compare(left->key, right->key);
     }
 };
 
-template <typename TKey, typename TValue, typename Compare = std::less<TKey>>
-requires StrictComparator<Compare, TKey>
-class TreeDictionary final : public IDictionary<TKey, TValue> {
+template <typename Key, typename Value, typename Compare = std::less<Key>>
+requires StrictComparator<Compare, Key>
+class TreeDictionary final : public IDictionary<Key, Value> {
 private:
-    using Entry = DictionaryEntry<TKey, TValue>;
+    using Entry = DictionaryEntry<Key, Value>;
     using EntryPointer = std::shared_ptr<Entry>;
-    using EntryCompare = DictionaryEntryPointerCompare<TKey, TValue, Compare>;
+    using EntryCompare = DictionaryEntryPointerCompare<Key, Value, Compare>;
 
     BinarySearchTree<EntryPointer, EntryCompare> tree_;
 
-    static EntryPointer makeProbe(const TKey& key) {
+    static EntryPointer makeProbe(const Key& key) {
         return std::make_shared<Entry>(key);
     }
 
@@ -74,11 +74,11 @@ public:
     std::size_t getCount() const noexcept override { return tree_.size(); }
     std::optional<std::size_t> getCapacity() const noexcept override { return std::nullopt; }
 
-    bool containsKey(const TKey& key) const override {
+    bool containsKey(const Key& key) const override {
         return tree_.contains(makeProbe(key));
     }
 
-    std::optional<TValue> find(const TKey& key) const override {
+    std::optional<Value> find(const Key& key) const override {
         try {
             const EntryPointer& entry = tree_.search(makeProbe(key));
             return entry->value.value();
@@ -87,26 +87,26 @@ public:
         }
     }
 
-    std::expected<void, Error> add(const TKey& key, const TValue& value) override {
+    std::expected<void, Error> add(const Key& key, const Value& value) override {
         if (!tree_.insert(std::make_shared<Entry>(key, value))) {
             return std::unexpected(makeError(ErrorCode::DuplicateKey));
         }
         return {};
     }
 
-    bool update(const TKey& key, const TValue& value) override {
-        return modify(key, [&value](TValue& current) { current = value; });
+    bool update(const Key& key, const Value& value) override {
+        return modify(key, [&value](Value& current) { current = value; });
     }
 
-    std::unique_ptr<IDictionary<TKey, TValue>> createEmpty() const override {
+    std::unique_ptr<IDictionary<Key, Value>> createEmpty() const override {
         return std::make_unique<TreeDictionary>();
     }
 
-    std::unique_ptr<IDictionary<TKey, TValue>> clone() const override {
+    std::unique_ptr<IDictionary<Key, Value>> clone() const override {
         return std::make_unique<TreeDictionary>(*this);
     }
 
-    bool modify(const TKey& key, const std::function<void(TValue&)>& modifier) override {
+    bool modify(const Key& key, const std::function<void(Value&)>& modifier) override {
         try {
             const EntryPointer& entry = tree_.search(makeProbe(key));
             modifier(entry->value.value());
@@ -116,18 +116,18 @@ public:
         }
     }
 
-    bool remove(const TKey& key) override { return tree_.remove(makeProbe(key)); }
+    bool remove(const Key& key) override { return tree_.remove(makeProbe(key)); }
 
-    DynamicArray<TKey> getKeys() const override {
-        DynamicArray<TKey> result;
+    DynamicArray<Key> getKeys() const override {
+        DynamicArray<Key> result;
         tree_.forEach(TraversalOrder::LKP, [&result](const EntryPointer& entry) {
             result.push_back(entry->key);
         });
         return result;
     }
 
-    DynamicArray<TValue> getValues() const override {
-        DynamicArray<TValue> result;
+    DynamicArray<Value> getValues() const override {
+        DynamicArray<Value> result;
         tree_.forEach(TraversalOrder::LKP, [&result](const EntryPointer& entry) {
             result.push_back(entry->value.value());
         });

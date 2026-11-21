@@ -116,9 +116,9 @@ void showForm(wxWindow* parent, const wxString& title, const FormFields& fields,
     dialog.ShowModal();
 }
 
-DynamicArray<Student> resolveMatches(const StudentSearchService& service, const StudentRecordReferences& ids) {
-    DynamicArray<Student> result(ids.size());
-    for (const auto& reference : ids) {
+DynamicArray<Student> resolveMatches(const StudentSearchService& service, const StudentRecordReferences& references) {
+    DynamicArray<Student> result(references.size());
+    for (const auto& reference : references) {
         auto student = service.resolve(reference);
         if (!student) throw std::logic_error("Search returned an unknown student ID");
         result.push_back(std::move(*student));
@@ -296,8 +296,8 @@ void MainFrame::configureSearch(bool resetChoices) {
         return;
     }
     const auto& attribute = searchAttributes_.at(static_cast<std::size_t>(selection));
-    for (std::size_t index = 0; index < attribute.fieldNames.size(); ++index) {
-        const auto& name = attribute.fieldNames[index];
+    for (std::size_t index = 0; index < attribute.fieldLabels.size(); ++index) {
+        const auto& name = attribute.fieldLabels[index];
         lowerInputs_.push_back(input(searchPanel_, lowerFields_, ui(name), "",
             ui("search-lower-" + std::to_string(index))));
         upperInputs_.push_back(input(searchPanel_, upperFields_, ui(name + " (upper bound)"), "",
@@ -324,7 +324,7 @@ wxPanel* MainFrame::createIndexesPage() {
         0, wxLEFT | wxRIGHT | wxBOTTOM, 12);
     indexSelection_ = new wxCheckListBox(page, wxID_ANY);
     indexSelection_->SetName("index-selection");
-    for (const auto& state : application_.getSearchService().getIndexes().getStates(
+    for (const auto& state : application_.getSearchService().getIndexCatalog().getStates(
             application_.getSearchService().getRepository())) {
         const auto label = state.name + (state.selection.backend == IndexBackend::Tree ? " / Tree" : " / Sorted array");
         const auto item = indexSelection_->Append(ui(label));
@@ -439,9 +439,9 @@ void MainFrame::saveStudents() {
 
 void MainFrame::buildIndexes() {
     DynamicArray<IndexSelection> selections;
-    for (std::size_t index = 0; index < snapshot_.indexes.size(); ++index) {
+    for (std::size_t index = 0; index < snapshot_.indexStates.size(); ++index) {
         if (indexSelection_->IsChecked(static_cast<unsigned int>(index))) {
-            selections.push_back(snapshot_.indexes[index].selection);
+            selections.push_back(snapshot_.indexStates[index].selection);
         }
     }
     if (selections.empty()) {
@@ -477,7 +477,7 @@ void MainFrame::search() {
     matches_->setRows({});
     matchCount_->SetLabel("Searching...");
     runTask("Search complete", [request](StudentApplication& app, TaskOutcome& outcome) -> std::expected<void, Error> {
-        const auto result = app.searchRecords(request);
+        const auto result = app.searchReferences(request);
         if (!result) return std::unexpected(result.error());
         outcome.matches = resolveMatches(app.getSearchService(), *result);
         return {};
@@ -520,12 +520,12 @@ MainFrame::Snapshot MainFrame::takeSnapshot(const StudentApplication& app) {
     result.students = DynamicArray<Student>(repository.getCount());
     for (std::size_t i = 0; i < repository.getCount(); ++i) result.students.push_back(repository.at(i));
     for (const auto& row : app.getLatestResults()) result.benchmark.push_back(row);
-    result.indexes = service.getIndexStatistics().indexes;
+    result.indexStates = service.getIndexStatistics().indexStates;
     std::size_t ready = 0;
-    for (const auto& state : result.indexes) {
+    for (const auto& state : result.indexStates) {
         if (state.built && !state.stale) ++ready;
     }
-    result.indexState = std::to_string(ready) + "/" + std::to_string(result.indexes.size()) + " ready";
+    result.indexState = std::to_string(ready) + "/" + std::to_string(result.indexStates.size()) + " ready";
     return result;
 }
 
@@ -537,7 +537,7 @@ void MainFrame::refreshSnapshot() {
     indexState_->SetLabel(ui("Indexes: " + snapshot_.indexState));
     SetStatusText(ui("Records: " + std::to_string(snapshot_.students.size()) + " | Indexes: " + snapshot_.indexState), 1);
     statistics_->DeleteAllItems();
-    for (const auto& state : snapshot_.indexes) {
+    for (const auto& state : snapshot_.indexStates) {
         const auto label = state.name + (state.selection.backend == IndexBackend::Tree ? " / Tree" : " / Sorted array");
         const auto row = statistics_->InsertItem(statistics_->GetItemCount(), ui(label));
         statistics_->SetItem(row, 1, state.built ? ui(std::to_string(state.keyCount)) : wxString("-"));

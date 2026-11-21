@@ -32,7 +32,7 @@ class MainFrame : public wxFrame {
         DynamicArray<Student> students;
         DynamicArray<BenchmarkResult> benchmark;
         std::string indexState;
-        DynamicArray<StudentIndexState> indexes;
+        DynamicArray<StudentIndexState> indexStates;
     };
     struct TaskOutcome {
         std::optional<Error> error;

@@ -153,7 +153,7 @@ public:
         return dictionary_ && dictionary_->supportsRangeSearch();
     }
 
-    const IStudentRangeSearch<Key>& rangeSearch() const override {
+    const IStudentRangeSearch<Key>& getRangeSearch() const override {
         if (!supportsRangeSearch()) {
             throw std::logic_error("Range search is not supported by this index");
         }
@@ -175,7 +175,7 @@ public:
         if (!dictionary_->supportsRangeSearch()) {
             return std::unexpected(makeError(ErrorCode::UnknownSelection, {.field = "Range strategy"}));
         }
-        const auto& range = dictionary_->rangeSearch();
+        const auto& range = dictionary_->getRangeSearch();
         StudentRecordReferences result;
         const auto visited = range.visitRange(lower, upper,
             [&result](const Key&, const StudentRecordReferences& group) {

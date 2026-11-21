@@ -17,11 +17,11 @@ public:
     const StudentSearchService& getSearchService() const noexcept { return searchService_; }
     const DynamicArray<BenchmarkResult>& getLatestResults() const noexcept { return latestResults_; }
 
-    std::expected<DynamicArray<RecordId>, Error> search(const SearchRequest& request) const {
-        return StudentSearchService::recordIds(searchRecords(request));
+    std::expected<DynamicArray<RecordId>, Error> searchIds(const SearchRequest& request) const {
+        return StudentSearchService::recordIds(searchReferences(request));
     }
 
-    std::expected<StudentRecordReferences, Error> searchRecords(const SearchRequest& request) const {
+    std::expected<StudentRecordReferences, Error> searchReferences(const SearchRequest& request) const {
         return executeSearch(searchService_, request);
     }
 

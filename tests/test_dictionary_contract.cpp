@@ -76,7 +76,7 @@ TEST(DictionaryContractTest, SortedArrayCloneAndMoveOwnIndependentValues) {
 TEST(SortedArrayDictionaryTest, InclusiveRangesFollowCustomComparatorAndSkipOtherKeys) {
     SortedArrayDictionary<int, int, std::greater<int>> dictionary;
     ASSERT_TRUE(dictionary.supportsRangeSearch());
-    const auto& range = dictionary.rangeSearch();
+    const auto& range = dictionary.getRangeSearch();
     std::size_t visits = 0;
     ASSERT_TRUE(range.visitRange(4, 2, [&](int, int) { ++visits; }));
     EXPECT_EQ(visits, 0U);
@@ -99,7 +99,7 @@ TEST(SortedArrayDictionaryTest, InclusiveRangesFollowCustomComparatorAndSkipOthe
     EXPECT_EQ(keys[0], 3);
     TreeDictionary<int, int> tree;
     EXPECT_FALSE(tree.supportsRangeSearch());
-    EXPECT_THROW(tree.rangeSearch(), std::logic_error);
+    EXPECT_THROW(tree.getRangeSearch(), std::logic_error);
 }
 
 TEST(SortedArrayDictionaryTest, EquivalentKeysNeedNoEqualityOperator) {

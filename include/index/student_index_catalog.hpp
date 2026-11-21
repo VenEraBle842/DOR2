@@ -15,7 +15,7 @@ struct StudentIndexState {
 
 struct StudentIndexStatistics {
     std::size_t recordCount{0};
-    DynamicArray<StudentIndexState> indexes;
+    DynamicArray<StudentIndexState> indexStates;
 };
 
 class StudentIndexCatalog {
@@ -57,10 +57,10 @@ public:
 
     std::shared_ptr<const IStudentIndexBase> getIndex(IndexSelection selection) const noexcept;
 
-    template <typename TKey>
-    std::shared_ptr<const IStudentIndex<TKey>> getIndex(IndexSelection selection) const noexcept {
+    template <typename Key>
+    std::shared_ptr<const IStudentIndex<Key>> getIndex(IndexSelection selection) const noexcept {
         const auto index = getIndex(selection);
-        return std::dynamic_pointer_cast<const IStudentIndex<TKey>>(index);
+        return std::dynamic_pointer_cast<const IStudentIndex<Key>>(index);
     }
 
     DynamicArray<IndexSelection> getSelections() const;
@@ -72,8 +72,8 @@ public:
     );
 
     void build(const StudentRepository& repository);
-    bool isBuilt() const noexcept;
-    bool isStale(const StudentRepository& repository) const noexcept;
+    bool hasBuiltIndexes() const noexcept;
+    bool hasStaleIndexes(const StudentRepository& repository) const noexcept;
 
     StudentIndexStatistics getStatistics(
         const StudentRepository& repository

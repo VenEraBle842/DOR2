@@ -14,7 +14,8 @@ std::expected<DynamicArray<RecordId>, Error> findExact(
     using Key = typename Attribute::KeyType;
     const auto index = catalog.getIndex<Key>({attribute.id, backend});
     if (!index) return std::unexpected(makeError(ErrorCode::UnknownSelection));
-    const auto result = index->findExact(repository, key);
+    const IStudentExactSearch<Key>& exactSearch = *index;
+    const auto result = exactSearch.findExact(repository, key);
     if (!result) return std::unexpected(result.error());
     DynamicArray<RecordId> ids;
     for (const auto& reference : *result) ids.push_back(reference.recordId);
@@ -29,7 +30,7 @@ std::expected<DynamicArray<RecordId>, Error> findRange(
     using Key = typename Attribute::KeyType;
     const auto index = catalog.getIndex<Key>({attribute.id, IndexBackend::SortedArray});
     if (!index) return std::unexpected(makeError(ErrorCode::UnknownSelection));
-    const auto result = index->rangeSearch().findRange(repository, lower, upper);
+    const auto result = index->getRangeSearch().findRange(repository, lower, upper);
     if (!result) return std::unexpected(result.error());
     DynamicArray<RecordId> ids;
     for (const auto& reference : *result) ids.push_back(reference.recordId);
@@ -163,7 +164,7 @@ TEST(StudentIndexCatalogTest, RejectsAnotherRepositoryWithSameSizeAndNumberOfCha
     EXPECT_EQ(findExact(catalog, studentLastNameAttribute, IndexBackend::SortedArray, unrelated, "Smith").error().code, ErrorCode::IndexStale);
     const auto statistics = catalog.getStatistics(unrelated);
     EXPECT_EQ(statistics.recordCount, unrelated.getCount());
-    for (const auto& state : statistics.indexes) {
+    for (const auto& state : statistics.indexStates) {
         EXPECT_TRUE(state.built);
         EXPECT_TRUE(state.stale);
     }
@@ -252,9 +253,12 @@ TEST(StudentIndexCatalogTest, SelectiveBuildTracksEveryAttributeAndBackendSepara
     const IndexSelection yearTree{SearchAttribute::BirthYear, IndexBackend::Tree};
     const IndexSelection yearArray{SearchAttribute::BirthYear, IndexBackend::SortedArray};
     const IndexSelection nameArray{SearchAttribute::LastName, IndexBackend::SortedArray};
-    EXPECT_FALSE(catalog.isBuilt());
+    EXPECT_FALSE(catalog.hasBuiltIndexes());
+    EXPECT_FALSE(catalog.hasStaleIndexes(repository));
     ASSERT_EQ(catalog.getStates(repository).size(), 10U);
     ASSERT_TRUE(catalog.build(repository, {yearTree, nameArray, yearTree}));
+    EXPECT_TRUE(catalog.hasBuiltIndexes());
+    EXPECT_FALSE(catalog.hasStaleIndexes(repository));
     for (const auto& state : catalog.getStates(repository)) {
         EXPECT_EQ(state.built, state.selection == yearTree || state.selection == nameArray);
         EXPECT_FALSE(state.stale);
@@ -263,6 +267,7 @@ TEST(StudentIndexCatalogTest, SelectiveBuildTracksEveryAttributeAndBackendSepara
     EXPECT_EQ(findRange(catalog, studentBirthYearAttribute, repository, 2002, 2004).error().code, ErrorCode::IndexNotBuilt);
     ASSERT_TRUE(repository.add({50, "A", "Smith", 2005, 4.0}));
     ASSERT_TRUE(catalog.build(repository, {yearArray}));
+    EXPECT_TRUE(catalog.hasStaleIndexes(repository));
     EXPECT_EQ(findExact(catalog, studentBirthYearAttribute, IndexBackend::Tree, repository, 2003).error().code, ErrorCode::IndexStale);
     EXPECT_EQ(findExact(catalog, studentLastNameAttribute, IndexBackend::SortedArray, repository, "Smith").error().code, ErrorCode::IndexStale);
     const auto years = findRange(catalog, studentBirthYearAttribute, repository, 2002, 2005);
@@ -270,7 +275,9 @@ TEST(StudentIndexCatalogTest, SelectiveBuildTracksEveryAttributeAndBackendSepara
     ASSERT_EQ(years->size(), 5U);
     EXPECT_EQ((*years)[4], 50U);
     EXPECT_FALSE(catalog.getIndex(yearTree)->supportsRangeSearch());
-    EXPECT_THROW(catalog.getIndex<int>(yearTree)->rangeSearch(), std::logic_error);
+    EXPECT_THROW(catalog.getIndex<int>(yearTree)->getRangeSearch(), std::logic_error);
+    catalog.build(repository);
+    EXPECT_FALSE(catalog.hasStaleIndexes(repository));
 }
 
 TEST(StudentIndexCatalogTest, InvalidSelectionPreservesAllPreviouslyBuiltStates) {
@@ -420,7 +427,7 @@ TEST(StudentIndexCatalogTest, StatisticsIncludeUnbuiltStaleAndCustomIndexes) {
     StudentIndexCatalog catalog;
     const auto initial = catalog.getStatistics(repository);
     EXPECT_EQ(initial.recordCount, repository.getCount());
-    for (const auto& state : initial.indexes) {
+    for (const auto& state : initial.indexStates) {
         EXPECT_FALSE(state.built);
         EXPECT_FALSE(state.stale);
         EXPECT_EQ(state.keyCount, 0U);
@@ -434,8 +441,8 @@ TEST(StudentIndexCatalogTest, StatisticsIncludeUnbuiltStaleAndCustomIndexes) {
     catalog.registerIndex(nameLength, selected.backend);
     ASSERT_TRUE(catalog.build(repository, {selected}));
     const auto built = catalog.getStatistics(repository);
-    ASSERT_EQ(built.indexes.size(), initial.indexes.size() + 1);
-    for (const auto& state : built.indexes) {
+    ASSERT_EQ(built.indexStates.size(), initial.indexStates.size() + 1);
+    for (const auto& state : built.indexStates) {
         if (state.selection == selected) {
             EXPECT_TRUE(state.built);
             EXPECT_FALSE(state.stale);
@@ -449,7 +456,7 @@ TEST(StudentIndexCatalogTest, StatisticsIncludeUnbuiltStaleAndCustomIndexes) {
     ASSERT_TRUE(repository.add({50, "N", "New", 2005, 4.0}));
     const auto stale = catalog.getStatistics(repository);
     EXPECT_EQ(stale.recordCount, repository.getCount());
-    for (const auto& state : stale.indexes) {
+    for (const auto& state : stale.indexStates) {
         EXPECT_EQ(state.stale, state.selection == selected);
     }
 }

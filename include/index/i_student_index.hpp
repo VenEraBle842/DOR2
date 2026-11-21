@@ -30,27 +30,33 @@ public:
     virtual bool supportsRangeSearch() const noexcept = 0;
 };
 
-template <typename TKey>
+template <typename Key>
+class IStudentExactSearch {
+public:
+    virtual ~IStudentExactSearch() = default;
+
+    virtual std::expected<StudentRecordReferences, Error> findExact(
+        const StudentRepository& repository,
+        const Key& key
+    ) const = 0;
+};
+
+template <typename Key>
 class IStudentRangeSearch {
 public:
     virtual ~IStudentRangeSearch() = default;
 
     virtual std::expected<StudentRecordReferences, Error> findRange(
         const StudentRepository& repository,
-        const TKey& lower,
-        const TKey& upper
+        const Key& lower,
+        const Key& upper
     ) const = 0;
 };
 
-template <typename TKey>
-class IStudentIndex : public IStudentIndexBase {
+template <typename Key>
+class IStudentIndex : public IStudentIndexBase, public IStudentExactSearch<Key> {
 public:
     ~IStudentIndex() override = default;
 
-    virtual std::expected<StudentRecordReferences, Error> findExact(
-        const StudentRepository& repository,
-        const TKey& key
-    ) const = 0;
-
-    virtual const IStudentRangeSearch<TKey>& rangeSearch() const = 0;
+    virtual const IStudentRangeSearch<Key>& getRangeSearch() const = 0;
 };

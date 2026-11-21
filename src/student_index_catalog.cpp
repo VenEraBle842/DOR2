@@ -1,7 +1,7 @@
 #include "index/student_index_catalog.hpp"
 
 StudentIndexCatalog::StudentIndexCatalog() {
-    forEachStudentAttribute([this](const auto& attribute) {
+    forEachDefaultStudentAttribute([this](const auto& attribute) {
         registerIndex(attribute, IndexBackend::Tree);
         registerIndex(attribute, IndexBackend::SortedArray);
     });
@@ -98,14 +98,14 @@ void StudentIndexCatalog::build(const StudentRepository& repository) {
     }
 }
 
-bool StudentIndexCatalog::isBuilt() const noexcept {
+bool StudentIndexCatalog::hasBuiltIndexes() const noexcept {
     for (const auto& entry : indexes_) {
         if (entry.index->isBuilt()) return true;
     }
     return false;
 }
 
-bool StudentIndexCatalog::isStale(const StudentRepository& repository) const noexcept {
+bool StudentIndexCatalog::hasStaleIndexes(const StudentRepository& repository) const noexcept {
     for (const auto& entry : indexes_) {
         if (entry.index->isStale(repository)) return true;
     }

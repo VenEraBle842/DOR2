@@ -2,14 +2,14 @@
 
 SearchRequestHandlers makeDefaultSearchHandlers() {
     SearchRequestHandlers handlers;
-    forEachStudentAttribute([&handlers](const auto& attribute) {
+    forEachDefaultStudentAttribute([&handlers](const auto& attribute) {
         handlers.registerAttribute(attribute);
     });
     return handlers;
 }
 
 void SearchRequestHandlers::registerHandler(SearchAttributeDescription description, Handler handler) {
-    if (description.fieldNames.empty() || !handler) {
+    if (description.fieldLabels.empty() || !handler) {
         throw std::invalid_argument("A search attribute requires input fields and a handler");
     }
     for (auto& entry : handlers_) {
@@ -22,10 +22,10 @@ void SearchRequestHandlers::registerHandler(SearchAttributeDescription descripti
     handlers_.push_back({std::move(description), std::move(handler)});
 }
 
-DynamicArray<SearchAttributeDescription> SearchRequestHandlers::getAttributes(bool range) const {
+DynamicArray<SearchAttributeDescription> SearchRequestHandlers::getAttributes(bool rangeOnly) const {
     DynamicArray<SearchAttributeDescription> result;
     for (const auto& entry : handlers_) {
-        if (!range || entry.description.supportsRange) {
+        if (!rangeOnly || entry.description.supportsRange) {
             result.push_back(entry.description);
         }
     }
@@ -42,11 +42,11 @@ std::expected<StudentRecordReferences, Error> SearchRequestHandlers::execute(
         if (request.range && !description.supportsRange) {
             return std::unexpected(makeError(ErrorCode::UnknownSelection, {.field = "Range attribute"}));
         }
-        if (request.lower.size() != description.fieldNames.size() ||
-            (request.range && request.upper.size() != description.fieldNames.size())) {
+        if (request.lower.size() != description.fieldLabels.size() ||
+            (request.range && request.upper.size() != description.fieldLabels.size())) {
             return std::unexpected(makeError(ErrorCode::InvalidSearchKey,
                 {.field = description.name,
-                 .detail = "Expected fields per key: " + std::to_string(description.fieldNames.size())}));
+                 .detail = "Expected fields per key: " + std::to_string(description.fieldLabels.size())}));
         }
         return entry.handler(service, request);
     }
